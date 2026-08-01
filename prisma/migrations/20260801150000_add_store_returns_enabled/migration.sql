@@ -1,0 +1,2 @@
+ALTER TABLE "stores"
+ADD COLUMN "returnsEnabled" BOOLEAN NOT NULL DEFAULT false;

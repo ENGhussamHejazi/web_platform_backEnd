@@ -1,0 +1,1 @@
+ALTER TABLE "stores" ADD COLUMN "usdToSypRate" DECIMAL(12,2);

@@ -1,0 +1,17 @@
+name: souq-syria
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: souq_syria_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: souq
+      POSTGRES_PASSWORD: souq_dev_password
+      POSTGRES_DB: souq_syria
+    ports:
+      - "5435:5432"
+    volumes:
+      - souq_pgdata:/var/lib/postgresql/data
+
+volumes:
+  souq_pgdata:

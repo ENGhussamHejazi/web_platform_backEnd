@@ -1,0 +1,2 @@
+ALTER TABLE "plans"
+  ADD COLUMN "maxImagesPerProduct" INTEGER NOT NULL DEFAULT 8;

@@ -1,0 +1,1513 @@
+// Souq Syria (سوق سوريا) — Multi-tenant e-commerce platform
+// Row-level multi-tenancy: every store-scoped table carries storeId.
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider  = "postgresql"
+  // Pooled connection (PgBouncer) used by the app at runtime.
+  url       = env("DATABASE_URL")
+  // Unpooled connection required by `prisma migrate` / `db push`.
+  directUrl = env("DIRECT_URL")
+}
+
+enum Role {
+  SUPER_ADMIN
+  MERCHANT
+  CUSTOMER
+}
+
+enum StoreStatus {
+  PENDING
+  ACTIVE
+  SUSPENDED
+  REJECTED
+  MAINTENANCE
+}
+
+enum AnnouncementType {
+  PROMO
+  FREE_SHIPPING
+  DISCOUNT
+}
+
+enum StoreThemeTemplate {
+  MINIMAL
+  MODERN
+  CLASSIC
+}
+
+enum HomepageSectionType {
+  HERO_SLIDER
+  FEATURED_CATEGORIES
+  FEATURED_PRODUCTS
+  NEW_ARRIVALS
+  BEST_SELLERS
+  DISCOUNTED_PRODUCTS
+  PRODUCTS_BY_CATEGORY
+  STORE_BENEFITS
+  WHATSAPP_CTA
+  NEWSLETTER
+}
+
+enum BillingCycle {
+  MONTHLY
+  YEARLY
+}
+
+// Administrative subscription state, set explicitly by admin actions.
+// EXPIRED and "expiring soon" are derived at query/read time from
+// Store.subscriptionEndAt rather than stored here — there is no
+// cron/job runner in this project to flip stored state on expiry.
+enum SubscriptionStatus {
+  TRIAL
+  ACTIVE
+  SUSPENDED
+  CANCELLED
+  PENDING_PAYMENT
+}
+
+// Distinct from PaymentStatus (order payments) to avoid enum-name collision.
+enum SubscriptionPaymentStatus {
+  PAID
+  UNPAID
+  PENDING_PAYMENT
+  FAILED
+  REFUNDED
+}
+
+enum RenewalType {
+  AUTO
+  MANUAL
+  DISABLED
+}
+
+enum SubscriptionActivityType {
+  CREATED
+  RENEWED
+  EXTENDED
+  PACKAGE_UPGRADED
+  PACKAGE_DOWNGRADED
+  SUSPENDED
+  REACTIVATED
+  CANCELLED
+  PAYMENT_RECORDED
+  PAYMENT_STATUS_CHANGED
+  NOTE_ADDED
+}
+
+enum SubscriptionPackageChangeType {
+  INITIAL
+  UPGRADE
+  DOWNGRADE
+}
+
+enum OrderStatus {
+  PENDING
+  CONFIRMED
+  PROCESSING
+  SHIPPED
+  OUT_FOR_DELIVERY
+  DELIVERED
+  CANCELLED
+}
+
+enum LoyaltyPointTransactionType {
+  EARNED
+  REDEEMED
+  RESTORED
+}
+
+enum PaymentMethod {
+  CASH_ON_DELIVERY
+  CARD
+  CRYPTO
+}
+
+enum FulfillmentType {
+  DELIVERY
+  PICKUP
+}
+
+enum PaymentStatus {
+  UNPAID
+  PARTIALLY_PAID
+  PAID
+  REFUNDED
+  PARTIALLY_REFUNDED
+}
+
+enum OrderActivityType {
+  CREATED
+  STATUS_CHANGED
+  PAYMENT_UPDATED
+  NOTE_ADDED
+  NOTE_UPDATED
+  NOTE_DELETED
+  DRIVER_ASSIGNED
+  ITEM_EDITED
+  DISCOUNT_APPLIED
+  RETURN_REQUESTED
+  RETURN_STATUS_CHANGED
+  REFUND_PROCESSED
+  RESTOCKED
+  CANCELLED
+}
+
+enum ReturnStatus {
+  REQUESTED
+  UNDER_REVIEW
+  APPROVED
+  REJECTED
+  AWAITING_PRODUCT
+  PRODUCT_RECEIVED
+  INSPECTING
+  REFUND_PENDING
+  REFUNDED
+  COMPLETED
+}
+
+enum RestockDecision {
+  NONE
+  RESTOCK_AVAILABLE
+  RESTOCK_DAMAGED
+  INSPECTION
+  SUPPLIER
+}
+
+enum RefundStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+enum MerchantType {
+  PHYSICAL_STORE_OWNER
+  ONLINE_SELLER
+}
+
+enum WeightUnit {
+  KG
+  GRAM
+}
+
+enum ApplicationStatus {
+  DRAFT
+  SUBMITTED
+  UNDER_REVIEW
+  CHANGES_REQUESTED
+  APPROVED
+  REJECTED
+  SUSPENDED
+}
+
+enum VerificationStatus {
+  NOT_SUBMITTED
+  PENDING_REVIEW
+  VERIFIED
+  REJECTED
+  EXPIRED
+}
+
+enum EmailDeliveryStatus {
+  QUEUED
+  PROCESSING
+  SENT
+  FAILED
+  CANCELLED
+}
+
+// A store's single stock location today doubles as both a warehouse (holds
+// inventory) and a branch (a place customers/orders are associated with) —
+// WAREHOUSE/BRANCH exist for when a merchant later splits those roles out.
+enum WarehouseType {
+  WAREHOUSE
+  BRANCH
+  BOTH
+}
+
+enum StockMovementType {
+  OPENING_STOCK
+  ORDER_RESERVATION
+  RESERVATION_RELEASE
+  SALE
+  PURCHASE_RECEIPT
+  RETURN_TO_STOCK
+  DAMAGED_RETURN
+  MANUAL_ADJUSTMENT_INCREASE
+  MANUAL_ADJUSTMENT_DECREASE
+  DAMAGED
+  LOST
+  TRANSFER_OUT
+  TRANSFER_IN
+}
+
+enum StockReservationStatus {
+  ACTIVE
+  COMMITTED
+  RELEASED
+}
+
+enum Governorate {
+  DAMASCUS
+  RIF_DIMASHQ
+  ALEPPO
+  HOMS
+  HAMA
+  LATAKIA
+  TARTUS
+  IDLIB
+  DEIR_EZ_ZOR
+  RAQQA
+  HASAKAH
+  DARAA
+  SWEIDA
+  QUNEITRA
+}
+
+model User {
+  id                String    @id @default(uuid())
+  name              String
+  email             String
+  passwordHash      String
+  passwordResetTokenHash String?   @unique
+  passwordResetExpiresAt DateTime?
+  phone             String?
+  role              Role      @default(CUSTOMER)
+  // Only set for CUSTOMER accounts: the store this customer belongs to.
+  // Merchants/admins keep this null — their own store is Store.ownerId.
+  storeId           String?
+  // Customer-profile fields — only ever populated for CUSTOMER accounts,
+  // edited via the storefront account area.
+  avatarUrl         String?
+  dateOfBirth       DateTime?
+  gender            String?
+  preferredLanguage String?   @default("ar")
+  loyaltyPoints     Int       @default(0)
+  // Updated by a lightweight client heartbeat while the user has the app
+  // open, so the platform owner can see which merchants are online right
+  // now in the messaging inbox. Not a per-request timestamp (too costly) —
+  // only bumped on the dedicated heartbeat call.
+  lastActiveAt      DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  store                    Store?                    @relation("StoreOwner")
+  customerOfStore          Store?                    @relation("StoreCustomers", fields: [storeId], references: [id], onDelete: Cascade)
+  orders                   Order[]                   @relation("CustomerOrders")
+  refreshTokens            RefreshToken[]
+  application              StoreApplication?         @relation("ApplicantUser")
+  notifications            Notification[]
+  reviews                  Review[]                  @relation("ProductReviews")
+  customerConversations    CustomerConversation[]
+  loyaltyPointTransactions LoyaltyPointTransaction[]
+  addresses                CustomerAddress[]         @relation("CustomerAddresses")
+
+  @@unique([storeId, email])
+  @@index([role])
+  @@index([storeId])
+  @@index([passwordResetExpiresAt])
+  @@map("users")
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  tokenHash String   @unique
+  userId    String
+  expiresAt DateTime
+  revoked   Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("refresh_tokens")
+}
+
+model Store {
+  id                  String        @id @default(uuid())
+  ownerId             String        @unique
+  name                String
+  slug                String        @unique
+  description         String?
+  logoUrl             String?
+  primaryColor        String        @default("#0EA5E9")
+  status              StoreStatus   @default(PENDING)
+  statusNote          String?
+  planId              String?
+  billingCycle        BillingCycle?
+  // Set whenever a plan is (re)assigned; end = start + 1 month/year per billingCycle.
+  subscriptionStartAt DateTime?
+  subscriptionEndAt   DateTime?
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
+
+  // Public storefront configuration — backfilled from StoreApplication's
+  // onboarding data on approval, editable afterwards via merchant settings.
+  // Business/activity classification(s) (see STORE_BUSINESS_CATEGORIES) — a
+  // store may sell more than one kind of product, so this is a list. Gates
+  // merchant-only features like weight-based selling.
+  businessCategories        String[]  @default([])
+  socialLinks               Json?
+  contactPhone              String?
+  contactWhatsapp           String?
+  publicEmail               String?
+  currency                  String    @default("SYP")
+  // Merchant-maintained daily market rate used to show an indicative USD
+  // equivalent while orders continue to be recorded in SYP.
+  usdToSypRate              Decimal?  @db.Decimal(12, 2)
+  returnPolicy              String?
+  returnsEnabled            Boolean   @default(false)
+  shippingPolicy            String?
+  pickupEnabled             Boolean   @default(false)
+  pickupAddress             String?
+  codAvailable              Boolean   @default(false)
+  bankTransferAvailable     Boolean   @default(false)
+  loyaltyPointsEnabled      Boolean   @default(false)
+  pointsPerDeliveredOrder   Int       @default(1)
+  pointsRequiredForDiscount Int       @default(10)
+  loyaltyDiscountPercentage Int       @default(10)
+  legalLinks                Json?
+  // Non-null + in the future means the storefront shows "opening soon"
+  // instead of the live catalog, even though status is already ACTIVE.
+  openingAt                 DateTime?
+  // Customer-safe message shown while status = MAINTENANCE. Intentionally
+  // separate from statusNote, which may hold internal/admin-only notes.
+  maintenanceMessage        String?
+
+  owner                    User                      @relation("StoreOwner", fields: [ownerId], references: [id])
+  plan                     Plan?                     @relation(fields: [planId], references: [id])
+  products                 Product[]
+  categories               Category[]
+  orders                   Order[]
+  shippingZones            ShippingZone[]
+  application              StoreApplication?
+  customers                User[]                    @relation("StoreCustomers")
+  announcements            Announcement[]
+  newsletterSubscribers    NewsletterSubscriber[]
+  homepageSections         HomepageSection[]
+  reviews                  Review[]
+  galleryImages            StoreGalleryImage[]
+  theme                    StoreTheme?
+  warehouses               Warehouse[]
+  inventoryItems           InventoryItem[]
+  stockMovements           StockMovement[]
+  stockReservations        StockReservation[]
+  conversation             Conversation?
+  customerConversations    CustomerConversation[]
+  subscription             Subscription?
+  loyaltyPointTransactions LoyaltyPointTransaction[]
+
+  @@index([status])
+  @@map("stores")
+}
+
+/// One two-way message thread per store, between that store's owner and the
+/// platform (SUPER_ADMIN) side. Created lazily on the first message either
+/// direction sends.
+model Conversation {
+  id            String    @id @default(uuid())
+  storeId       String    @unique
+  lastMessageAt DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  store    Store     @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  messages Message[]
+
+  @@map("conversations")
+}
+
+model Message {
+  id             String    @id @default(uuid())
+  conversationId String
+  senderId       String
+  senderRole     Role
+  body           String
+  readAt         DateTime?
+  createdAt      DateTime  @default(now())
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, createdAt])
+  @@map("messages")
+}
+
+/// One two-way message thread per (store, customer) pair — direct chat
+/// between a store owner and one of their customers. Distinct from
+/// Conversation/Message above (that's store<->platform admin). Gated by the
+/// store's plan via FEATURE_KEYS.CUSTOMER_CHAT. Created lazily on first send.
+model CustomerConversation {
+  id            String    @id @default(uuid())
+  storeId       String
+  customerId    String
+  lastMessageAt DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  store    Store             @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  customer User              @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  messages CustomerMessage[]
+
+  @@unique([storeId, customerId])
+  @@index([storeId, lastMessageAt])
+  @@map("customer_conversations")
+}
+
+model CustomerMessage {
+  id             String    @id @default(uuid())
+  conversationId String
+  senderId       String
+  senderRole     Role
+  body           String
+  readAt         DateTime?
+  createdAt      DateTime  @default(now())
+
+  conversation CustomerConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, createdAt])
+  @@map("customer_messages")
+}
+
+model StoreTheme {
+  id                       String              @id @default(uuid())
+  storeId                  String              @unique
+  templateId               StoreThemeTemplate  @default(MINIMAL)
+  templateVersion          Int                 @default(1)
+  // Always populated — what the merchant editor/preview reads and edits.
+  draftConfig              Json
+  // Null until the merchant publishes at least once; only this (never
+  // draftConfig) may ever reach the public storefront response.
+  publishedConfig          Json?
+  publishedTemplateId      StoreThemeTemplate?
+  publishedTemplateVersion Int?
+  publishedAt              DateTime?
+  createdAt                DateTime            @default(now())
+  updatedAt                DateTime            @updatedAt
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@map("store_themes")
+}
+
+model StoreGalleryImage {
+  id        String  @id @default(uuid())
+  storeId   String
+  url       String
+  // Storage-driver handle (Cloudinary public_id) so the asset can be removed
+  // remotely when the row is deleted. Null for pre-existing/local images.
+  publicId  String?
+  sortOrder Int     @default(0)
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@index([storeId])
+  @@map("store_gallery_images")
+}
+
+model HomepageSection {
+  id            String              @id @default(uuid())
+  storeId       String
+  type          HomepageSectionType
+  title         String?
+  subtitle      String?
+  description   String?
+  // Per-type payload (slides, item lists, categoryId, limit, message, …) —
+  // validated by zod per `type` on the merchant write path, not at the DB
+  // level, since the shape legitimately differs by section type.
+  config        Json?
+  sortOrder     Int                 @default(0)
+  isVisible     Boolean             @default(true)
+  showOnMobile  Boolean             @default(true)
+  showOnDesktop Boolean             @default(true)
+  startDate     DateTime?
+  endDate       DateTime?
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@index([storeId])
+  @@map("homepage_sections")
+}
+
+model Announcement {
+  id           String           @id @default(uuid())
+  storeId      String
+  message      String
+  link         String?
+  type         AnnouncementType @default(PROMO)
+  startDate    DateTime?
+  endDate      DateTime?
+  isVisible    Boolean          @default(true)
+  showOnMobile Boolean          @default(true)
+  sortOrder    Int              @default(0)
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@index([storeId])
+  @@map("announcements")
+}
+
+model NewsletterSubscriber {
+  id        String   @id @default(uuid())
+  storeId   String
+  email     String
+  createdAt DateTime @default(now())
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@unique([storeId, email])
+  @@index([storeId])
+  @@map("newsletter_subscribers")
+}
+
+/// One store application per merchant, created alongside their Store at
+/// registration time. Application status (review workflow) is intentionally
+/// separate from Store.status (operational state) per the approval workflow.
+model StoreApplication {
+  id                   String            @id @default(uuid())
+  userId               String            @unique
+  storeId              String            @unique
+  merchantType         MerchantType
+  // Business/activity classification(s) chosen in the wizard (see
+  // STORE_BUSINESS_CATEGORIES in backend/src/entitlements/business-categories.ts)
+  // — a store may sell more than one kind of product, so this is a list.
+  // Backfilled onto Store.businessCategories on approval.
+  businessCategories   String[]          @default([])
+  status               ApplicationStatus @default(DRAFT)
+  currentStep          Int               @default(1)
+  completionPercentage Int               @default(0)
+  submissionVersion    Int               @default(0)
+
+  // Step payloads, normalized loosely by wizard step to avoid one giant flat
+  // table while still keeping the whole application in a single row.
+  accountInfo  Json?
+  storeInfo    Json?
+  businessInfo Json?
+  shippingInfo Json?
+
+  publicMessage         String?
+  requestedChangeFields String[] @default([])
+  rejectionReason       String?
+
+  submittedAt      DateTime?
+  reviewStartedAt  DateTime?
+  approvedAt       DateTime?
+  rejectedAt       DateTime?
+  reviewedByUserId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user      User                       @relation("ApplicantUser", fields: [userId], references: [id])
+  store     Store                      @relation(fields: [storeId], references: [id])
+  documents ApplicationDocument[]
+  history   ApplicationStatusHistory[]
+  emailLogs EmailLog[]
+
+  @@index([status])
+  @@map("store_applications")
+}
+
+model ApplicationDocument {
+  id             String             @id @default(uuid())
+  applicationId  String
+  type           String
+  url            String
+  publicId       String?
+  identityNumber String?
+  expiryDate     DateTime?
+  status         VerificationStatus @default(PENDING_REVIEW)
+  createdAt      DateTime           @default(now())
+
+  application StoreApplication @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+
+  @@index([applicationId])
+  @@map("application_documents")
+}
+
+model ApplicationStatusHistory {
+  id            String             @id @default(uuid())
+  applicationId String
+  fromStatus    ApplicationStatus?
+  toStatus      ApplicationStatus
+  actorUserId   String?
+  note          String?
+  createdAt     DateTime           @default(now())
+
+  application StoreApplication @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+
+  @@index([applicationId])
+  @@map("application_status_history")
+}
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String
+  type      String
+  title     String
+  body      String
+  isRead    Boolean  @default(false)
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isRead])
+  @@map("notifications")
+}
+
+/// Persists 5xx API errors so the monitoring dashboard's error log survives
+/// process restarts, unlike the in-memory ring buffer used for live stats.
+model SystemErrorLog {
+  id         String   @id @default(uuid())
+  method     String
+  path       String
+  status     Int
+  durationMs Float
+  at         DateTime @default(now())
+
+  @@index([at])
+  @@map("system_error_logs")
+}
+
+/// Tracks queued/sent application-related emails for idempotency and delivery
+/// visibility. Never stores SMTP credentials or full provider payloads.
+model EmailLog {
+  id                String              @id @default(uuid())
+  idempotencyKey    String              @unique
+  type              String
+  applicationId     String?
+  submissionVersion Int?
+  recipientUserId   String
+  recipientEmail    String
+  subject           String
+  status            EmailDeliveryStatus @default(QUEUED)
+  failureCode       String?
+  retryCount        Int                 @default(0)
+  queuedAt          DateTime            @default(now())
+  sentAt            DateTime?
+  failedAt          DateTime?
+
+  application StoreApplication? @relation(fields: [applicationId], references: [id])
+
+  @@index([applicationId])
+  @@map("email_logs")
+}
+
+model Plan {
+  id                  String   @id @default(uuid())
+  key                 String   @unique
+  name                String
+  description         String?
+  priceMonthly        Decimal  @db.Decimal(10, 2)
+  priceYearly         Decimal  @db.Decimal(10, 2)
+  maxProducts         Int?
+  maxImagesPerProduct Int      @default(8)
+  features            String[]
+  // Machine-readable gate keys (see FeatureKey in entitlements module),
+  // distinct from `features` which is display-only marketing bullet text.
+  featureKeys         String[] @default([])
+  isActive            Boolean  @default(true)
+  order               Int      @default(0)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  stores             Store[]
+  subscriptions      Subscription[]
+  packageChangesFrom SubscriptionPackageChange[] @relation("PackageChangeFrom")
+  packageChangesTo   SubscriptionPackageChange[] @relation("PackageChangeTo")
+
+  @@map("plans")
+}
+
+/// Admin-managed billing/lifecycle state for a store's subscription, layered
+/// on top of Store.planId/billingCycle/subscriptionStartAt/subscriptionEndAt
+/// (which remain the single source of truth for plan + dates so the existing
+/// admin stores plan-selector can't drift out of sync). One row per Store.
+model Subscription {
+  id            String                    @id @default(uuid())
+  storeId       String                    @unique
+  status        SubscriptionStatus        @default(ACTIVE)
+  paymentStatus SubscriptionPaymentStatus @default(UNPAID)
+  renewalType   RenewalType               @default(MANUAL)
+  planId        String?
+
+  basePrice   Decimal @default(0) @db.Decimal(10, 2)
+  discount    Decimal @default(0) @db.Decimal(10, 2)
+  tax         Decimal @default(0) @db.Decimal(10, 2)
+  finalAmount Decimal @default(0) @db.Decimal(10, 2)
+  currency    String  @default("SYP")
+
+  trialEndsAt   DateTime?
+  lastPaymentAt DateTime?
+  nextRenewalAt DateTime?
+
+  cancelledAt   DateTime?
+  cancelReason  String?
+  suspendedAt   DateTime?
+  suspendReason String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  plan  Plan? @relation(fields: [planId], references: [id])
+
+  payments       SubscriptionPayment[]
+  invoices       SubscriptionInvoice[]
+  packageChanges SubscriptionPackageChange[]
+  activities     SubscriptionActivity[]
+  notes          SubscriptionNote[]
+
+  @@index([status])
+  @@index([paymentStatus])
+  @@map("subscriptions")
+}
+
+model SubscriptionPayment {
+  id             String                    @id @default(uuid())
+  subscriptionId String
+  amount         Decimal                   @db.Decimal(10, 2)
+  method         String?
+  status         SubscriptionPaymentStatus
+  reference      String?
+  paidAt         DateTime?
+  createdAt      DateTime                  @default(now())
+
+  subscription Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+
+  @@index([subscriptionId, createdAt])
+  @@map("subscription_payments")
+}
+
+model SubscriptionInvoice {
+  id             String   @id @default(uuid())
+  subscriptionId String
+  invoiceNumber  String   @unique
+  amount         Decimal  @db.Decimal(10, 2)
+  discount       Decimal  @default(0) @db.Decimal(10, 2)
+  tax            Decimal  @default(0) @db.Decimal(10, 2)
+  finalAmount    Decimal  @db.Decimal(10, 2)
+  currency       String   @default("SYP")
+  periodStart    DateTime
+  periodEnd      DateTime
+  issuedAt       DateTime @default(now())
+
+  subscription Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+
+  @@index([subscriptionId, issuedAt])
+  @@map("subscription_invoices")
+}
+
+model SubscriptionPackageChange {
+  id             String                        @id @default(uuid())
+  subscriptionId String
+  fromPlanId     String?
+  toPlanId       String
+  changeType     SubscriptionPackageChangeType
+  actorId        String?
+  note           String?
+  createdAt      DateTime                      @default(now())
+
+  subscription Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  fromPlan     Plan?        @relation("PackageChangeFrom", fields: [fromPlanId], references: [id])
+  toPlan       Plan         @relation("PackageChangeTo", fields: [toPlanId], references: [id])
+
+  @@index([subscriptionId, createdAt])
+  @@map("subscription_package_changes")
+}
+
+/// Append-only audit log for subscriptions — mirrors OrderActivity.
+model SubscriptionActivity {
+  id             String                   @id @default(uuid())
+  subscriptionId String
+  storeId        String
+  type           SubscriptionActivityType
+  actorId        String?
+  title          String
+  description    String?
+  previousValue  String?
+  newValue       String?
+  createdAt      DateTime                 @default(now())
+
+  subscription Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+
+  @@index([subscriptionId, createdAt])
+  @@map("subscription_activities")
+}
+
+/// Internal admin notes on a subscription — mirrors OrderNote.
+model SubscriptionNote {
+  id             String   @id @default(uuid())
+  subscriptionId String
+  storeId        String
+  authorId       String
+  content        String
+  createdAt      DateTime @default(now())
+
+  subscription Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+
+  @@index([subscriptionId, createdAt])
+  @@map("subscription_notes")
+}
+
+model Category {
+  id               String   @id @default(uuid())
+  storeId          String
+  name             String
+  slug             String
+  imageUrl         String?
+  icon             String?
+  sortOrder        Int      @default(0)
+  isActive         Boolean  @default(true)
+  isVisible        Boolean  @default(true)
+  parentCategoryId String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  store    Store      @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  products Product[]
+  parent   Category?  @relation("CategoryTree", fields: [parentCategoryId], references: [id], onDelete: SetNull)
+  children Category[] @relation("CategoryTree")
+
+  @@unique([storeId, name])
+  @@unique([storeId, slug])
+  @@index([storeId])
+  @@index([storeId, isActive, isVisible, sortOrder])
+  @@index([parentCategoryId])
+  @@map("categories")
+}
+
+model Product {
+  id               String      @id @default(uuid())
+  storeId          String
+  categoryId       String?
+  name             String
+  description      String?
+  price            Decimal     @db.Decimal(10, 2)
+  compareAtPrice   Decimal?    @db.Decimal(10, 2)
+  stock            Decimal     @default(0) @db.Decimal(12, 3)
+  isActive         Boolean     @default(true)
+  isFeatured       Boolean     @default(false)
+  isNewArrival     Boolean     @default(false)
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
+  // Denormalized rating cache, recomputed whenever a review is created,
+  // updated, or deleted — avoids an aggregate join on every product list/get.
+  avgRating        Float       @default(0)
+  reviewCount      Int         @default(0)
+  // Denormalized sales counter used for instant bestseller ranking.
+  totalSold        Int         @default(0)
+  // True once this product has at least one ProductVariant. When true, the
+  // flat price/stock fields above are no longer authoritative for selling —
+  // each variant carries its own price/stock instead.
+  hasVariants      Boolean     @default(false)
+  // True when this product is a customizable "box" — sold with its own
+  // price/stock like any product, but the customer also fills it with other
+  // products from boxItems (up to boxMaxItems) before adding it to cart.
+  isBox            Boolean     @default(false)
+  boxMaxItems      Int?
+  // Sold per weight unit (e.g. produce/meat priced per kg) instead of per
+  // piece. Only settable when one of the owning store's businessCategories is in
+  // WEIGHT_SELLING_CATEGORIES (backend/src/entitlements/business-categories.ts).
+  // `price` above is interpreted as price-per-weightUnit when true.
+  soldByWeight     Boolean     @default(false)
+  weightUnit       WeightUnit?
+  minOrderQuantity Decimal?    @db.Decimal(10, 3)
+  stepQuantity     Decimal?    @db.Decimal(10, 3)
+
+  store             Store              @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  category          Category?          @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  images            ProductImage[]
+  variants          ProductVariant[]
+  orderItems        OrderItem[]
+  reviews           Review[]
+  inventoryItems    InventoryItem[]
+  stockMovements    StockMovement[]
+  stockReservations StockReservation[]
+  // Eligible-items list when this product isBox (this product is the box side).
+  boxItems          BoxItem[]          @relation("BoxItemBox")
+  // Boxes this product is eligible to be placed inside of.
+  eligibleInBoxes   BoxItem[]          @relation("BoxItemEligible")
+  boxPresets        BoxPreset[]
+  presetAppearances BoxPresetItem[]
+
+  @@index([storeId])
+  @@index([storeId, categoryId])
+  @@index([storeId, isActive, totalSold])
+  @@map("products")
+}
+
+// Merchant-curated list of products allowed inside a given box product.
+model BoxItem {
+  id            String @id @default(uuid())
+  boxProductId  String
+  itemProductId String
+  sortOrder     Int    @default(0)
+
+  boxProduct  Product @relation("BoxItemBox", fields: [boxProductId], references: [id], onDelete: Cascade)
+  itemProduct Product @relation("BoxItemEligible", fields: [itemProductId], references: [id], onDelete: Cascade)
+
+  @@unique([boxProductId, itemProductId])
+  @@index([itemProductId])
+  @@map("box_items")
+}
+
+// A merchant-defined ready-made combination for a box product (e.g. "Watch
+// & Rose Box") — a starting point the customer can buy as-is or customize.
+model BoxPreset {
+  id           String  @id @default(uuid())
+  boxProductId String
+  name         String
+  imageUrl     String?
+  sortOrder    Int     @default(0)
+  isActive     Boolean @default(true)
+
+  boxProduct Product         @relation(fields: [boxProductId], references: [id], onDelete: Cascade)
+  items      BoxPresetItem[]
+
+  @@index([boxProductId])
+  @@map("box_presets")
+}
+
+model BoxPresetItem {
+  id            String @id @default(uuid())
+  presetId      String
+  itemProductId String
+  quantity      Int    @default(1)
+  sortOrder     Int    @default(0)
+
+  preset      BoxPreset @relation(fields: [presetId], references: [id], onDelete: Cascade)
+  itemProduct Product   @relation(fields: [itemProductId], references: [id], onDelete: Cascade)
+
+  @@index([presetId])
+  @@index([itemProductId])
+  @@map("box_preset_items")
+}
+
+/// A sellable size/color combination of a product (clothes, shoes, etc).
+/// Optional — most products have zero rows here and keep using Product's
+/// flat price/stock. Once a product has variants, its price/stock is no
+/// longer authoritative for selling; each variant's own price/stock is.
+model ProductVariant {
+  id             String   @id @default(uuid())
+  productId      String
+  size           String?
+  color          String?
+  // Optional swatch color for UI display, purely cosmetic.
+  colorHex       String?
+  sku            String?
+  // Null falls back to the parent Product's price.
+  price          Decimal? @db.Decimal(10, 2)
+  compareAtPrice Decimal? @db.Decimal(10, 2)
+  stock          Decimal  @default(0) @db.Decimal(12, 3)
+  isActive       Boolean  @default(true)
+  sortOrder      Int      @default(0)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  product           Product            @relation(fields: [productId], references: [id], onDelete: Cascade)
+  inventoryItems    InventoryItem[]
+  stockMovements    StockMovement[]
+  stockReservations StockReservation[]
+  orderItems        OrderItem[]
+
+  @@unique([productId, size, color])
+  @@index([productId])
+  @@map("product_variants")
+}
+
+/// A physical stock location. Every store gets one default warehouse today
+/// (backfilled by scripts/backfill-inventory.ts); multi-location support
+/// reuses this same model rather than a parallel Branch table.
+model Warehouse {
+  id        String        @id @default(uuid())
+  storeId   String
+  name      String
+  code      String?
+  type      WarehouseType @default(BOTH)
+  address   String?
+  isDefault Boolean       @default(false)
+  isActive  Boolean       @default(true)
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+
+  store             Store              @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  inventoryItems    InventoryItem[]
+  stockMovements    StockMovement[]
+  stockReservations StockReservation[]
+
+  @@unique([storeId, code])
+  @@index([storeId])
+  @@map("warehouses")
+}
+
+/// On-hand stock for one product in one warehouse. `available` is a
+/// maintained (not computed) column — always kept equal to
+/// `quantity - reserved` in the same transaction as any write, so it can be
+/// used directly in an atomic conditional `updateMany` (available >= qty)
+/// the same way the pre-existing `Product.stock` conditional decrement did.
+/// `Product.stock` itself is kept as a synced mirror of `available` for the
+/// single-warehouse-per-product case, so existing storefront/merchant UI
+/// that reads Product.stock keeps working unchanged.
+model InventoryItem {
+  id              String   @id @default(uuid())
+  storeId         String
+  warehouseId     String
+  productId       String
+  // Set when this row tracks one specific ProductVariant rather than the
+  // whole product. Null for non-variant products (the original case).
+  variantId       String?
+  quantity        Decimal  @default(0) @db.Decimal(12, 3)
+  reserved        Decimal  @default(0) @db.Decimal(12, 3)
+  available       Decimal  @default(0) @db.Decimal(12, 3)
+  damaged         Decimal  @default(0) @db.Decimal(12, 3)
+  incoming        Decimal  @default(0) @db.Decimal(12, 3)
+  reorderLevel    Int      @default(0)
+  reorderQuantity Int      @default(0)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  store     Store           @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  warehouse Warehouse       @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+  product   Product         @relation(fields: [productId], references: [id], onDelete: Cascade)
+  variant   ProductVariant? @relation(fields: [variantId], references: [id], onDelete: Cascade)
+
+  // Note: Postgres treats NULL as distinct in this composite index, so it
+  // does not by itself block two rows with variantId = NULL for the same
+  // warehouse+product — acceptable here since exactly one code path
+  // (getOrCreateInventoryItem) ever creates the non-variant row.
+  @@unique([warehouseId, productId, variantId])
+  @@index([storeId])
+  @@index([productId])
+  @@index([variantId])
+  @@map("inventory_items")
+}
+
+/// Immutable, append-only stock ledger. Every quantity change to an
+/// InventoryItem must be paired with a StockMovement row in the same
+/// transaction — the current InventoryItem numbers must always be
+/// reconcilable by replaying this ledger. Corrections create a new
+/// movement rather than editing/deleting a past one.
+model StockMovement {
+  id              String            @id @default(uuid())
+  storeId         String
+  warehouseId     String
+  productId       String
+  variantId       String?
+  type            StockMovementType
+  quantityBefore  Decimal           @db.Decimal(12, 3)
+  quantityChanged Decimal           @db.Decimal(12, 3)
+  quantityAfter   Decimal           @db.Decimal(12, 3)
+  relatedOrderId  String?
+  reason          String?
+  notes           String?
+  referenceNumber String?
+  idempotencyKey  String?           @unique
+  createdAt       DateTime          @default(now())
+
+  store     Store           @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  warehouse Warehouse       @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+  product   Product         @relation(fields: [productId], references: [id], onDelete: Cascade)
+  variant   ProductVariant? @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  order     Order?          @relation(fields: [relatedOrderId], references: [id], onDelete: SetNull)
+
+  @@index([storeId, createdAt])
+  @@index([storeId, productId, createdAt])
+  @@index([warehouseId])
+  @@index([relatedOrderId])
+  @@index([type])
+  @@index([variantId])
+  @@map("stock_movements")
+}
+
+/// One row per order item's stock hold. Created when an order is placed
+/// (reserves `available` without touching physical `quantity`), then either
+/// COMMITTED (order delivered — `quantity` decremented) or RELEASED (order
+/// cancelled — `available` restored). Exactly one of those must happen
+/// exactly once per reservation; `status` enforces that.
+model StockReservation {
+  id          String                 @id @default(uuid())
+  storeId     String
+  warehouseId String
+  productId   String
+  variantId   String?
+  orderId     String
+  quantity    Decimal                @db.Decimal(12, 3)
+  status      StockReservationStatus @default(ACTIVE)
+  createdAt   DateTime               @default(now())
+  resolvedAt  DateTime?
+
+  store     Store           @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  warehouse Warehouse       @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+  product   Product         @relation(fields: [productId], references: [id], onDelete: Cascade)
+  variant   ProductVariant? @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  order     Order           @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([storeId])
+  @@index([orderId])
+  @@index([productId, status])
+  @@index([variantId])
+  @@map("stock_reservations")
+}
+
+model Review {
+  id         String   @id @default(uuid())
+  storeId    String
+  productId  String
+  customerId String
+  rating     Int
+  comment    String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  store    Store   @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  product  Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  customer User    @relation("ProductReviews", fields: [customerId], references: [id], onDelete: Cascade)
+
+  // One review per customer per product — resubmitting updates it instead
+  // of creating a duplicate.
+  @@unique([productId, customerId])
+  @@index([storeId])
+  @@index([productId])
+  @@map("reviews")
+}
+
+model ProductImage {
+  id        String  @id @default(uuid())
+  productId String
+  url       String
+  // Storage-driver handle (Cloudinary public_id) so the asset can be removed
+  // remotely when the row is deleted. Null for pre-existing/local images.
+  publicId  String?
+  sortOrder Int     @default(0)
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([productId])
+  @@map("product_images")
+}
+
+/// Syrian city / town / delivery area, nested under a Governorate. Delivery
+/// pricing is intentionally NOT stored here — each store defines its own
+/// price per city via ShippingZone, since the same city can cost differently
+/// per store.
+model City {
+  id           String      @id @default(uuid())
+  governorate  Governorate
+  nameAr       String
+  nameEn       String?
+  slug         String
+  isActive     Boolean     @default(true)
+  displayOrder Int         @default(0)
+  postalCode   String?
+  notes        String?
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  shippingZones     ShippingZone[]
+  customerAddresses CustomerAddress[]
+  orders            Order[]
+
+  @@unique([governorate, slug])
+  @@index([governorate])
+  @@index([governorate, isActive])
+  @@map("cities")
+}
+
+model ShippingZone {
+  id                    String      @id @default(uuid())
+  storeId               String
+  governorate           Governorate
+  // Null cityId = legacy governorate-wide rate, kept for stores that have
+  // not migrated to city-level pricing yet.
+  cityId                String?
+  cost                  Decimal     @db.Decimal(10, 2)
+  isDeliveryAvailable   Boolean     @default(true)
+  currencyCode          String      @default("SYP")
+  estimatedDeliveryTime String?
+  freeDeliveryMinimum   Decimal?    @db.Decimal(10, 2)
+  minimumOrderAmount    Decimal?    @db.Decimal(10, 2)
+  notes                 String?
+  createdAt             DateTime    @default(now())
+  updatedAt             DateTime    @updatedAt
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  city  City? @relation(fields: [cityId], references: [id], onDelete: SetNull)
+
+  @@unique([storeId, governorate, cityId])
+  @@index([storeId])
+  @@index([storeId, cityId])
+  @@map("shipping_zones")
+}
+
+/// Customer saved address book. Snapshots the city name at save time so
+/// historical display stays stable if the City row is later renamed.
+model CustomerAddress {
+  id               String      @id @default(uuid())
+  customerId       String
+  governorate      Governorate
+  cityId           String?
+  cityNameSnapshot String?
+  detailedAddress  String
+  building         String?
+  floor            String?
+  apartment        String?
+  landmark         String?
+  phone            String
+  notes            String?
+  isDefault        Boolean     @default(false)
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
+
+  customer User  @relation("CustomerAddresses", fields: [customerId], references: [id], onDelete: Cascade)
+  city     City? @relation(fields: [cityId], references: [id], onDelete: SetNull)
+
+  @@index([customerId])
+  @@map("customer_addresses")
+}
+
+model Order {
+  id                            String          @id @default(uuid())
+  storeId                       String
+  customerId                    String?
+  guestName                     String?
+  guestPhone                    String?
+  guestEmail                    String?
+  clientRequestId               String?
+  status                        OrderStatus     @default(PENDING)
+  subtotal                      Decimal         @db.Decimal(10, 2)
+  shippingCost                  Decimal         @default(0) @db.Decimal(10, 2)
+  total                         Decimal         @db.Decimal(10, 2)
+  loyaltyDiscount               Decimal         @default(0) @db.Decimal(10, 2)
+  pointsRedeemed                Int             @default(0)
+  // Snapshot of 1 USD in new SYP (after the 100:1 redenomination) at checkout.
+  usdToSypRateSnapshot          Decimal?        @db.Decimal(12, 2)
+  shippingAddress               String
+  governorate                   Governorate
+  cityId                        String?
+  cityNameSnapshot              String?
+  estimatedDeliveryTimeSnapshot String?
+  shippingZoneId                String?
+  fulfillmentType               FulfillmentType @default(DELIVERY)
+  paymentMethod                 PaymentMethod   @default(CASH_ON_DELIVERY)
+  // Customer-initiated cancellation.
+  cancelReason                  String?
+  cancelNote                    String?
+  cancelledAt                   DateTime?
+  // Stage timestamps, populated as the merchant advances Order.status, used
+  // to render the customer-facing order timeline with real dates instead of
+  // only the current status.
+  confirmedAt                   DateTime?
+  processingAt                  DateTime?
+  shippedAt                     DateTime?
+  outForDeliveryAt              DateTime?
+  deliveredAt                   DateTime?
+  // Payment tracking — collection status for COD/bank-transfer/manual methods.
+  paymentStatus                 PaymentStatus   @default(UNPAID)
+  paidAmount                    Decimal         @default(0) @db.Decimal(10, 2)
+  paymentReference              String?
+  paymentProofUrl               String?
+  paymentCollectedById          String?
+  paymentDate                   DateTime?
+  // Manual delivery/driver assignment — no external logistics integration.
+  assignedEmployeeId            String?
+  driverName                    String?
+  driverPhone                   String?
+  trackingNumber                String?
+  estimatedDeliveryAt           DateTime?
+  pickedUpAt                    DateTime?
+  deliveryFailedAt              DateTime?
+  deliveryFailureReason         String?
+  createdAt                     DateTime        @default(now())
+  updatedAt                     DateTime        @updatedAt
+
+  store                    Store                     @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  customer                 User?                     @relation("CustomerOrders", fields: [customerId], references: [id])
+  city                     City?                     @relation(fields: [cityId], references: [id], onDelete: SetNull)
+  items                    OrderItem[]
+  stockMovements           StockMovement[]
+  stockReservations        StockReservation[]
+  notes                    OrderNote[]
+  activities               OrderActivity[]
+  returns                  Return[]
+  refunds                  Refund[]
+  loyaltyPointTransactions LoyaltyPointTransaction[]
+
+  @@unique([storeId, clientRequestId])
+  @@index([storeId])
+  @@index([storeId, status])
+  @@map("orders")
+}
+
+/// Immutable points ledger. One entry per order and transaction type keeps
+/// both earning and redemption idempotent when requests are retried.
+model LoyaltyPointTransaction {
+  id         String                      @id @default(uuid())
+  storeId    String
+  customerId String
+  orderId    String
+  points     Int
+  type       LoyaltyPointTransactionType
+  createdAt  DateTime                    @default(now())
+
+  store    Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  customer User  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  order    Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@unique([orderId, type])
+  @@index([storeId, customerId])
+  @@map("loyalty_point_transactions")
+}
+
+/// Internal, employee-only notes on an order — never shown to the customer.
+model OrderNote {
+  id            String    @id @default(uuid())
+  orderId       String
+  storeId       String
+  authorId      String
+  content       String
+  pinned        Boolean   @default(false)
+  attachmentUrl String?
+  editedAt      DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+  @@map("order_notes")
+}
+
+/// Append-only order audit/activity log — the real source for the order
+/// timeline, written by logActivity() from every mutation rather than
+/// re-derived from the current status alone.
+model OrderActivity {
+  id            String            @id @default(uuid())
+  orderId       String
+  storeId       String
+  type          OrderActivityType
+  actorId       String?
+  title         String
+  description   String?
+  previousValue String?
+  newValue      String?
+  createdAt     DateTime          @default(now())
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId, createdAt])
+  @@map("order_activities")
+}
+
+/// A return request against an order, covering one or more OrderItems.
+model Return {
+  id                  String       @id @default(uuid())
+  orderId             String
+  storeId             String
+  status              ReturnStatus @default(REQUESTED)
+  reason              String
+  customerDescription String?
+  assignedEmployeeId  String?
+  createdAt           DateTime     @default(now())
+  completedAt         DateTime?
+
+  order   Order         @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  items   ReturnItem[]
+  images  ReturnImage[]
+  refunds Refund[]
+
+  @@index([orderId])
+  @@index([storeId, status])
+  @@map("returns")
+}
+
+model ReturnItem {
+  id              String          @id @default(uuid())
+  returnId        String
+  orderItemId     String
+  requestedQty    Int
+  approvedQty     Int?
+  condition       String?
+  restockDecision RestockDecision @default(NONE)
+
+  return    Return    @relation(fields: [returnId], references: [id], onDelete: Cascade)
+  orderItem OrderItem @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+
+  @@index([returnId])
+  @@index([orderItemId])
+  @@map("return_items")
+}
+
+model ReturnImage {
+  id       String  @id @default(uuid())
+  returnId String
+  url      String
+  publicId String?
+
+  return Return @relation(fields: [returnId], references: [id], onDelete: Cascade)
+
+  @@index([returnId])
+  @@map("return_images")
+}
+
+/// A refund against an order (optionally tied to a Return). Never mutates
+/// inventory directly — restocking is a separate, explicit action driven by
+/// ReturnItem.restockDecision, recorded as its own StockMovement.
+model Refund {
+  id            String        @id @default(uuid())
+  orderId       String
+  returnId      String?
+  storeId       String
+  amount        Decimal       @db.Decimal(10, 2)
+  method        PaymentMethod
+  status        RefundStatus  @default(PENDING)
+  processedById String?
+  processedAt   DateTime?
+  createdAt     DateTime      @default(now())
+
+  order  Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  return Return? @relation(fields: [returnId], references: [id], onDelete: SetNull)
+
+  @@index([orderId])
+  @@index([returnId])
+  @@map("refunds")
+}
+
+model OrderItem {
+  id                String  @id @default(uuid())
+  orderId           String
+  productId         String?
+  productName       String
+  variantId         String?
+  // Snapshot like productName — survives variant edits/deletion so past
+  // orders keep displaying what was actually bought (e.g. "L / أحمر").
+  variantLabel      String?
+  quantity          Decimal @db.Decimal(12, 3)
+  price             Decimal @db.Decimal(10, 2)
+  // Set only on the rows representing a box's chosen contents — points back
+  // at the row for the box product itself, so the order UI can group and
+  // indent them underneath it. Null for every normal order line.
+  parentOrderItemId String?
+
+  order       Order           @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product     Product?        @relation(fields: [productId], references: [id], onDelete: SetNull)
+  variant     ProductVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
+  returnItems ReturnItem[]
+  parent      OrderItem?      @relation("OrderItemChildren", fields: [parentOrderItemId], references: [id], onDelete: Cascade)
+  boxContents OrderItem[]     @relation("OrderItemChildren")
+
+  @@index([orderId])
+  @@index([variantId])
+  @@index([productId])
+  @@index([parentOrderItemId])
+  @@map("order_items")
+}
