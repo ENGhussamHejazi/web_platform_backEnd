@@ -8,3 +8,4 @@ node_modules
 # Local uploaded files
 /uploads/*
 !/uploads/.gitkeep
+.env.example
