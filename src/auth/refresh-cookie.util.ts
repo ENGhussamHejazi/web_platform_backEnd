@@ -11,6 +11,18 @@ export const REFRESH_COOKIE_NAME = 'refreshToken';
  * access token. `path` is scoped to /api/auth so the cookie isn't replayed
  * on every request, only the ones that need it.
  */
+/**
+ * `SameSite=Strict` never survives a real cross-site deploy (Vercel frontend,
+ * Render backend are different registrable domains) — the browser simply
+ * won't attach the cookie to the /auth/refresh request, so every refresh
+ * 401s and customers get bounced out of checkout. `None` is required for
+ * cross-site cookies and mandates `Secure`, which is already true in prod;
+ * dev stays `Strict` since localhost:5173/localhost:4000 are same-site.
+ */
+function refreshCookieSameSite(config: ConfigService): 'strict' | 'none' {
+  return config.get<string>('nodeEnv') === 'production' ? 'none' : 'strict';
+}
+
 export function setRefreshCookie(
   res: Response,
   config: ConfigService,
@@ -20,7 +32,7 @@ export function setRefreshCookie(
   res.cookie(REFRESH_COOKIE_NAME, token, {
     httpOnly: true,
     secure: config.get<string>('nodeEnv') === 'production',
-    sameSite: 'strict',
+    sameSite: refreshCookieSameSite(config),
     path: '/api/auth',
     maxAge: ms(refreshTtl as ms.StringValue),
   });
@@ -30,7 +42,7 @@ export function clearRefreshCookie(res: Response, config: ConfigService) {
   res.clearCookie(REFRESH_COOKIE_NAME, {
     httpOnly: true,
     secure: config.get<string>('nodeEnv') === 'production',
-    sameSite: 'strict',
+    sameSite: refreshCookieSameSite(config),
     path: '/api/auth',
   });
 }
