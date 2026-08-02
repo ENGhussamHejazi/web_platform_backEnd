@@ -40,6 +40,7 @@ export interface AppConfig {
     secure: boolean;
     user?: string;
     pass?: string;
+    brevoApiKey?: string;
     fromAddress: string;
     fromName: string;
   };
@@ -97,14 +98,19 @@ export default (): AppConfig => ({
     name: process.env.SUPER_ADMIN_NAME ?? 'مدير المنصة',
   },
   mail: {
-    // MAIL_DRIVER: log | smtp  ("log" prints emails to the console; used by
-    // default in local dev when SMTP credentials aren't configured).
-    driver: process.env.MAIL_DRIVER ?? (process.env.MAIL_HOST ? 'smtp' : 'log'),
+    // MAIL_DRIVER: log | smtp | brevo-api  ("log" prints emails to the console;
+    // used by default in local dev when SMTP credentials aren't configured).
+    // "brevo-api" sends over HTTPS via Brevo's transactional email API instead
+    // of raw SMTP — needed on hosts (e.g. Render) that block outbound SMTP ports.
+    driver:
+      process.env.MAIL_DRIVER ??
+      (process.env.BREVO_API_KEY ? 'brevo-api' : process.env.MAIL_HOST ? 'smtp' : 'log'),
     host: process.env.MAIL_HOST,
     port: parseInt(process.env.MAIL_PORT ?? '587', 10),
     secure: process.env.MAIL_SECURE === 'true',
     user: process.env.MAIL_USER,
     pass: process.env.MAIL_PASS,
+    brevoApiKey: process.env.BREVO_API_KEY,
     fromAddress: process.env.MAIL_FROM_ADDRESS ?? 'HUSSA.HEJAZI17@GMAIL.COM',
     fromName: process.env.MAIL_FROM_NAME ?? 'Souq Syria — Store Applications',
   },
