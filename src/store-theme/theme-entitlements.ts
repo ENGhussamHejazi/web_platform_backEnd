@@ -12,9 +12,6 @@ export const THEME_FIELD_GROUP_FEATURE_MAP: Record<ThemeConfigGroup, FeatureKey>
   buttons: 'CUSTOM_BUTTONS',
   productCards: 'CUSTOM_PRODUCT_CARDS',
   header: 'CUSTOM_HEADER',
-  // Category navigation is visually and functionally part of the header
-  // region — gated with the same key rather than inventing a near-duplicate.
-  categoriesNavigation: 'CUSTOM_HEADER',
   footer: 'CUSTOM_FOOTER',
   layout: 'CUSTOM_LAYOUT',
   slider: 'CUSTOM_SLIDER',

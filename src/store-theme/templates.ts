@@ -53,13 +53,6 @@ const MINIMAL_CONFIG: StoreThemeConfig = {
     backgroundColor: '#FFFFFF',
     textColor: '#2C2116',
   },
-  categoriesNavigation: {
-    style: 'underline',
-    sticky: false,
-    showImages: false,
-    backgroundColor: '#FFFFFF',
-    textColor: '#2C2116',
-  },
   footer: {
     layout: 'simple',
     showDescription: true,
@@ -111,13 +104,6 @@ const MODERN_CONFIG: StoreThemeConfig = {
     backgroundColor: '#FFFFFF',
     textColor: '#1E1B2E',
   },
-  categoriesNavigation: {
-    style: 'pills',
-    sticky: true,
-    showImages: true,
-    backgroundColor: '#FAF5FF',
-    textColor: '#1E1B2E',
-  },
   footer: {
     layout: 'columns',
     showDescription: true,
@@ -167,13 +153,6 @@ const CLASSIC_CONFIG: StoreThemeConfig = {
     showSearch: true,
     showContactActions: true,
     backgroundColor: '#FFFDF7',
-    textColor: '#1C1917',
-  },
-  categoriesNavigation: {
-    style: 'solid',
-    sticky: false,
-    showImages: false,
-    backgroundColor: '#FEF3E2',
     textColor: '#1C1917',
   },
   footer: {

@@ -72,16 +72,6 @@ const headerSchema = z
   })
   .strict();
 
-const categoriesNavigationSchema = z
-  .object({
-    style: z.enum(['underline', 'pills', 'solid', 'minimal']),
-    sticky: z.boolean(),
-    showImages: z.boolean(),
-    backgroundColor: hexColor,
-    textColor: hexColor,
-  })
-  .strict();
-
 const footerSchema = z
   .object({
     layout: z.enum(['simple', 'columns', 'centered']),
@@ -120,7 +110,6 @@ export const themeConfigGroupSchemas = {
   buttons: buttonsSchema,
   productCards: productCardsSchema,
   header: headerSchema,
-  categoriesNavigation: categoriesNavigationSchema,
   footer: footerSchema,
   layout: layoutSchema,
   slider: sliderSchema,
@@ -135,7 +124,6 @@ export const storeThemeConfigSchema = z
     buttons: buttonsSchema,
     productCards: productCardsSchema,
     header: headerSchema,
-    categoriesNavigation: categoriesNavigationSchema,
     footer: footerSchema,
     layout: layoutSchema,
     slider: sliderSchema,
@@ -160,7 +148,6 @@ export const updateThemeDraftSchema = z
         buttons: buttonsSchema.optional(),
         productCards: productCardsSchema.optional(),
         header: headerSchema.optional(),
-        categoriesNavigation: categoriesNavigationSchema.optional(),
         footer: footerSchema.optional(),
         layout: layoutSchema.optional(),
         slider: sliderSchema.optional(),

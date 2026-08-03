@@ -27,7 +27,9 @@ describe('ProductsService#create', () => {
         create: jest.fn().mockResolvedValue({ id: 'p1', images: [] }),
       },
     };
-    service = new ProductsService(prisma as never);
+    service = new ProductsService(prisma as never, {
+      deleteImage: jest.fn(),
+    } as never);
   });
 
   it('blocks creation once the plan product limit is reached', async () => {

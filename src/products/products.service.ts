@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { StorageService } from '../storage/storage.service';
 import { Prisma } from '../../generated/prisma';
 import {
   CreateCategoryDto,
@@ -95,7 +96,19 @@ const PRODUCT_SELECT = {
 
 @Injectable()
 export class ProductsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly storage: StorageService,
+  ) {}
+
+  /** Best-effort remote cleanup — a Cloudinary hiccup must never block a DB write. */
+  private async deleteRemoteImages(publicIds: (string | null)[]) {
+    await Promise.all(
+      publicIds
+        .filter((id): id is string => !!id)
+        .map((id) => this.storage.deleteImage(id)),
+    );
+  }
 
   private categorySlug(value: string) {
     return value
@@ -333,6 +346,7 @@ export class ProductsService {
       await this.ensureEligibleBoxItems(storeId, dto.boxItemIds);
     }
 
+    const removedPublicIds: (string | null)[] = [];
     await this.prisma.$transaction(async (tx) => {
       await tx.product.update({
         where: { id },
@@ -378,6 +392,11 @@ export class ProductsService {
       });
 
       if (dto.images) {
+        const oldImages = await tx.productImage.findMany({
+          where: { productId: id },
+          select: { publicId: true },
+        });
+        removedPublicIds.push(...oldImages.map((img) => img.publicId));
         await tx.productImage.deleteMany({ where: { productId: id } });
         if (dto.images.length) {
           await tx.productImage.createMany({
@@ -432,6 +451,8 @@ export class ProductsService {
         }
       }
     });
+
+    await this.deleteRemoteImages(removedPublicIds);
 
     return this.get(storeId, id);
   }
@@ -499,7 +520,12 @@ export class ProductsService {
 
   async remove(storeId: string, id: string) {
     await this.ensureOwned(storeId, id);
+    const images = await this.prisma.productImage.findMany({
+      where: { productId: id },
+      select: { publicId: true },
+    });
     await this.prisma.product.delete({ where: { id } });
+    await this.deleteRemoteImages(images.map((img) => img.publicId));
     return { deleted: true };
   }
 
