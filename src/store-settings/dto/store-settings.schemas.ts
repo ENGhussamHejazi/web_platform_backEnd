@@ -89,6 +89,8 @@ export const HOMEPAGE_SECTION_TYPES = [
   'BEST_SELLERS',
   'DISCOUNTED_PRODUCTS',
   'PRODUCTS_BY_CATEGORY',
+  'ALL_PRODUCTS',
+  'ALL_CATEGORY_PRODUCTS',
   'STORE_BENEFITS',
   'WHATSAPP_CTA',
 ] as const;
@@ -112,6 +114,12 @@ const homepageSectionConfigSchema = z.object({
   categoryId: z.string().uuid().optional(),
   limit: z.number().int().min(1).max(24).optional(),
   message: z.string().trim().max(300).optional(),
+  productSort: z.enum(['all', 'newest', 'featured', 'bestseller', 'discounted']).optional(),
+  showViewAll: z.boolean().optional(),
+  viewAllLabel: z.string().trim().max(60).optional(),
+  categoryIds: z.array(z.string().uuid()).max(50).optional(),
+  mobileColumns: z.union([z.literal(1), z.literal(2)]).optional(),
+  desktopColumns: z.union([z.literal(2), z.literal(3), z.literal(4), z.literal(5), z.literal(6)]).optional(),
 });
 
 export const homepageSectionSchema = z

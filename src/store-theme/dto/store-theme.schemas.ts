@@ -67,6 +67,13 @@ const headerSchema = z
     sticky: z.boolean(),
     showSearch: z.boolean(),
     showContactActions: z.boolean(),
+    showHomeLink: z.boolean(),
+    showCategories: z.boolean(),
+    showChat: z.boolean(),
+    showWishlist: z.boolean(),
+    showAccount: z.boolean(),
+    showCart: z.boolean(),
+    searchPlaceholder: z.string().trim().max(80),
     backgroundColor: hexColor,
     textColor: hexColor,
   })

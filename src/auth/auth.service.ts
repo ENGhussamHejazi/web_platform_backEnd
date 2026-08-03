@@ -216,6 +216,24 @@ export class AuthService {
           ),
         },
       });
+      await tx.homepageSection.createMany({
+        data: [
+          {
+            storeId: store.id,
+            type: 'ALL_PRODUCTS',
+            title: 'كل المنتجات',
+            subtitle: 'اكتشف أحدث المنتجات المتوفرة في المتجر',
+            config: { limit: 4 },
+            sortOrder: 0,
+          },
+          {
+            storeId: store.id,
+            type: 'ALL_CATEGORY_PRODUCTS',
+            config: { limit: 4 },
+            sortOrder: 1,
+          },
+        ],
+      });
       await tx.storeApplication.create({
         data: {
           userId: created.id,
