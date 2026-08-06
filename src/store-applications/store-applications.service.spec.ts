@@ -13,18 +13,37 @@ function buildApplication(overrides: Partial<Record<string, unknown>> = {}) {
     merchantType: 'ONLINE_SELLER',
     status: 'DRAFT',
     submissionVersion: 0,
-    accountInfo: { termsAccepted: true, privacyAccepted: true },
+    accountInfo: {
+      whatsapp: '0911111111',
+      country: 'سوريا',
+      city: 'دمشق',
+      preferredContactMethod: 'whatsapp',
+      termsAccepted: true,
+      privacyAccepted: true,
+    },
     storeInfo: {
       nameAr: 'متجري',
       category: 'ملابس',
+      description: 'متجر ملابس',
       csPhone: '0911111111',
       currency: 'SYP',
     },
-    businessInfo: { sellingModel: 'own_products' },
-    shippingInfo: { deliveryMethod: 'shipping_company' },
+    businessInfo: {
+      sellingModel: 'own_products',
+      productSource: 'مورد محلي',
+      avgOrderPrepTime: 'يوم واحد',
+    },
+    shippingInfo: {
+      deliveryMethod: 'shipping_company',
+      deliveryFee: 5000,
+      avgPrepTime: 'يوم واحد',
+      avgDeliveryTime: 'يومان',
+      returnPolicy: 'استرجاع خلال 3 أيام',
+      shippingPolicy: 'شحن لكل المحافظات',
+    },
     publicMessage: null,
     requestedChangeFields: [],
-    documents: [],
+    documents: [{ type: 'identity' }],
     ...overrides,
   };
 }
@@ -104,6 +123,35 @@ describe('StoreApplicationsService', () => {
           type: 'store-application-received',
           idempotencyKey: 'store-application-received:app-1:1',
         }),
+      );
+    });
+
+    it('rejects submission when a mandatory document is missing', async () => {
+      prisma.storeApplication.findUnique.mockResolvedValue(
+        buildApplication({ documents: [] }),
+      );
+      await expect(service.submit('user-1')).rejects.toThrow(
+        BadRequestException,
+      );
+    });
+
+    it('requires the commercial registration from physical store owners', async () => {
+      prisma.storeApplication.findUnique.mockResolvedValue(
+        buildApplication({
+          merchantType: 'PHYSICAL_STORE_OWNER',
+          businessInfo: {
+            legalBusinessName: 'شركة النور',
+            physicalStoreName: 'متجر النور',
+            branchCount: 1,
+            mainBranchAddress: 'دمشق - الشعلان',
+            openingTime: '09:00',
+            closingTime: '21:00',
+          },
+          documents: [{ type: 'identity' }],
+        }),
+      );
+      await expect(service.submit('user-1')).rejects.toThrow(
+        BadRequestException,
       );
     });
 

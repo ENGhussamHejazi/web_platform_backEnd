@@ -8,7 +8,11 @@ export interface EnqueueEmailInput {
   type: string;
   applicationId?: string;
   submissionVersion?: number;
-  recipientUserId: string;
+  /** Scope columns — purely for auditing/filtering EmailLog, not for delivery. */
+  storeId?: string;
+  orderId?: string;
+  /** Absent for guest-checkout emails, which have no account behind them. */
+  recipientUserId?: string;
   recipientEmail: string;
   subject: string;
   html: string;
@@ -35,7 +39,7 @@ export class EmailQueueService {
 
   /** Enqueues an email if this idempotency key hasn't been queued before. */
   async enqueue(input: EnqueueEmailInput): Promise<void> {
-    let log;
+    let log: { id: string };
     try {
       log = await this.prisma.emailLog.create({
         data: {
@@ -43,6 +47,8 @@ export class EmailQueueService {
           type: input.type,
           applicationId: input.applicationId,
           submissionVersion: input.submissionVersion,
+          storeId: input.storeId,
+          orderId: input.orderId,
           recipientUserId: input.recipientUserId,
           recipientEmail: input.recipientEmail,
           subject: input.subject,

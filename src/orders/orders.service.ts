@@ -8,6 +8,10 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { InventoryService } from '../inventory/inventory.service';
 import {
+  NOOP,
+  TransactionalMailService,
+} from '../mail/transactional-mail.service';
+import {
   OrderActivityType,
   OrderStatus,
   Prisma,
@@ -28,6 +32,12 @@ import {
 } from './dto/orders.schemas';
 
 type Tx = Prisma.TransactionClient;
+
+const REFUND_METHOD_LABELS: Record<string, string> = {
+  CASH_ON_DELIVERY: 'نقداً',
+  CARD: 'إلى البطاقة',
+  CRYPTO: 'عملة رقمية',
+};
 
 const ORDER_LIST_SELECT = {
   id: true,
@@ -80,7 +90,9 @@ const ORDER_DETAIL_SELECT = {
   pickedUpAt: true,
   deliveryFailedAt: true,
   deliveryFailureReason: true,
-  store: { select: { currency: true, name: true, logoUrl: true, usdToSypRate: true } },
+  store: {
+    select: { currency: true, name: true, logoUrl: true, usdToSypRate: true },
+  },
   items: {
     select: {
       id: true,
@@ -127,6 +139,7 @@ export class OrdersService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly inventory: InventoryService,
+    private readonly mail: TransactionalMailService,
   ) {}
 
   private toMoney<
@@ -221,9 +234,7 @@ export class OrdersService {
     if (order.status !== OrderStatus.CANCELLED) {
       actions.push('update_status', 'assign_driver');
     }
-    if (
-      ['PENDING', 'CONFIRMED', 'PROCESSING'].includes(order.status as string)
-    ) {
+    if (['PENDING', 'CONFIRMED', 'PROCESSING'].includes(order.status)) {
       actions.push('cancel_order');
     }
     if (order.status === OrderStatus.DELIVERED) {
@@ -238,7 +249,9 @@ export class OrdersService {
   async list(storeId: string, query: ListOrdersQueryDto) {
     const where: Prisma.OrderWhereInput = { storeId };
     if (query.status) where.status = query.status;
-    if (query.governorate) where.governorate = query.governorate as Prisma.OrderWhereInput['governorate'];
+    if (query.governorate)
+      where.governorate =
+        query.governorate as Prisma.OrderWhereInput['governorate'];
     if (query.cityId) where.cityId = query.cityId;
     if (query.dateFrom || query.dateTo) {
       where.createdAt = {
@@ -317,7 +330,10 @@ export class OrdersService {
     return {
       ...this.toMoney(order),
       currency: order.store.currency,
-      usdToSypRateSnapshot: order.usdToSypRateSnapshot === null ? null : Number(order.usdToSypRateSnapshot),
+      usdToSypRateSnapshot:
+        order.usdToSypRateSnapshot === null
+          ? null
+          : Number(order.usdToSypRateSnapshot),
       refundTotal,
       customerStats,
       inventoryMovements,
@@ -379,7 +395,7 @@ export class OrdersService {
 
     const timestampField = STAGE_TIMESTAMP_FIELD[dto.status];
 
-    return this.prisma.$transaction(async (tx) => {
+    const updated = await this.prisma.$transaction(async (tx) => {
       const order = await tx.order.update({
         where: { id },
         data: {
@@ -470,6 +486,16 @@ export class OrdersService {
 
       return order;
     });
+
+    // Only on a real transition — re-saving the same status shouldn't email
+    // the customer again. Fired post-commit and not awaited.
+    if (existing.status !== dto.status) {
+      this.mail
+        .sendOrderStatusUpdate(id, dto.status, dto.reason ?? dto.note)
+        .catch(NOOP);
+    }
+
+    return updated;
   }
 
   async addNote(
@@ -737,7 +763,7 @@ export class OrdersService {
     });
     if (!ret) throw new NotFoundException('طلب الإرجاع غير موجود');
 
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       if (dto.items?.length) {
         for (const itemUpdate of dto.items) {
           const current = ret.items.find((i) => i.id === itemUpdate.id);
@@ -830,6 +856,18 @@ export class OrdersService {
 
       return updated;
     });
+
+    if (dto.status && dto.status !== ret.status) {
+      this.mail
+        .sendReturnStatusUpdate({
+          returnId: returnId,
+          orderId,
+          status: dto.status,
+        })
+        .catch(NOOP);
+    }
+
+    return result;
   }
 
   async createRefund(
@@ -846,8 +884,8 @@ export class OrdersService {
       if (!ret) throw new NotFoundException('طلب الإرجاع غير موجود');
     }
 
-    return this.prisma.$transaction(async (tx) => {
-      const refund = await tx.refund.create({
+    const refund = await this.prisma.$transaction(async (tx) => {
+      const created = await tx.refund.create({
         data: {
           orderId,
           returnId: dto.returnId,
@@ -883,8 +921,19 @@ export class OrdersService {
         newValue: String(dto.amount),
       });
 
-      return refund;
+      return created;
     });
+
+    this.mail
+      .sendRefundIssued({
+        refundId: refund.id,
+        orderId,
+        amount: dto.amount,
+        methodLabel: REFUND_METHOD_LABELS[dto.method] ?? dto.method,
+      })
+      .catch(NOOP);
+
+    return refund;
   }
 
   async getInvoice(storeId: string, orderId: string) {

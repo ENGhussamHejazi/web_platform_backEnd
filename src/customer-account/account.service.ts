@@ -23,6 +23,19 @@ import {
   UpdateProfileDto,
 } from './dto/account.schemas';
 import type { StoredFile } from '../storage/storage.interface';
+import {
+  NOOP,
+  TransactionalMailService,
+} from '../mail/transactional-mail.service';
+
+const CANCELLATION_REASON_LABELS: Record<string, string> = {
+  ORDERED_BY_MISTAKE: 'تم الطلب بالخطأ',
+  FOUND_BETTER_PRICE: 'وجد سعراً أفضل',
+  CHANGE_SHIPPING_ADDRESS: 'تغيير عنوان الشحن',
+  CHANGE_PRODUCTS: 'تعديل المنتجات المطلوبة',
+  DELIVERY_TOO_LONG: 'مدة التوصيل طويلة',
+  OTHER: 'سبب آخر',
+};
 
 // Orders can only be customer-cancelled before they've left the merchant's
 // hands. Once SHIPPED/OUT_FOR_DELIVERY/DELIVERED, cancellation is no longer
@@ -103,6 +116,7 @@ export class CustomerAccountService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly inventory: InventoryService,
+    private readonly mail: TransactionalMailService,
   ) {}
 
   private async getStoreOrThrow(slug: string) {
@@ -393,6 +407,17 @@ export class CustomerAccountService {
       await this.inventory.releaseReservation(tx, orderId);
       return order;
     });
+
+    // Confirms the cancellation to the customer and alerts the merchant, who
+    // may already have started preparing the order.
+    this.mail
+      .sendOrderCancelledByCustomer(
+        orderId,
+        CANCELLATION_REASON_LABELS[dto.reason] ?? dto.reason,
+        dto.note,
+      )
+      .catch(NOOP);
+
     return this.toOrderDto(updated);
   }
 
@@ -487,7 +512,12 @@ export class CustomerAccountService {
     isDefault: boolean;
     createdAt: Date;
     updatedAt: Date;
-    city: { id: string; nameAr: string; nameEn: string | null; isActive: boolean } | null;
+    city: {
+      id: string;
+      nameAr: string;
+      nameEn: string | null;
+      isActive: boolean;
+    } | null;
   }) {
     const { city, ...rest } = address;
     return {
@@ -514,7 +544,11 @@ export class CustomerAccountService {
     const addresses = await this.prisma.customerAddress.findMany({
       where: { customerId: user.id },
       orderBy: [{ isDefault: 'desc' }, { createdAt: 'desc' }],
-      include: { city: { select: { id: true, nameAr: true, nameEn: true, isActive: true } } },
+      include: {
+        city: {
+          select: { id: true, nameAr: true, nameEn: true, isActive: true },
+        },
+      },
     });
     return addresses.map((a) => this.toAddressDto(a));
   }
@@ -522,7 +556,10 @@ export class CustomerAccountService {
   async createAddress(slug: string, user: AuthUser, dto: CreateAddressDto) {
     const store = await this.getStoreOrThrow(slug);
     this.assertCustomerOfStore(store.id, user);
-    const city = await this.assertCityInGovernorate(dto.cityId, dto.governorate);
+    const city = await this.assertCityInGovernorate(
+      dto.cityId,
+      dto.governorate,
+    );
 
     const address = await this.prisma.$transaction(async (tx) => {
       if (dto.isDefault) {
@@ -531,7 +568,9 @@ export class CustomerAccountService {
           data: { isDefault: false },
         });
       }
-      const count = await tx.customerAddress.count({ where: { customerId: user.id } });
+      const count = await tx.customerAddress.count({
+        where: { customerId: user.id },
+      });
       return tx.customerAddress.create({
         data: {
           customerId: user.id,
@@ -547,7 +586,11 @@ export class CustomerAccountService {
           notes: dto.notes,
           isDefault: dto.isDefault || count === 0,
         },
-        include: { city: { select: { id: true, nameAr: true, nameEn: true, isActive: true } } },
+        include: {
+          city: {
+            select: { id: true, nameAr: true, nameEn: true, isActive: true },
+          },
+        },
       });
     });
     return this.toAddressDto(address);
@@ -556,7 +599,11 @@ export class CustomerAccountService {
   private async getAddressOrThrow(user: AuthUser, addressId: string) {
     const address = await this.prisma.customerAddress.findUnique({
       where: { id: addressId },
-      include: { city: { select: { id: true, nameAr: true, nameEn: true, isActive: true } } },
+      include: {
+        city: {
+          select: { id: true, nameAr: true, nameEn: true, isActive: true },
+        },
+      },
     });
     if (!address || address.customerId !== user.id) {
       throw new NotFoundException('العنوان غير موجود');
@@ -605,7 +652,11 @@ export class CustomerAccountService {
           notes: dto.notes,
           isDefault: dto.isDefault,
         },
-        include: { city: { select: { id: true, nameAr: true, nameEn: true, isActive: true } } },
+        include: {
+          city: {
+            select: { id: true, nameAr: true, nameEn: true, isActive: true },
+          },
+        },
       });
     });
     return this.toAddressDto(address);
@@ -652,12 +703,18 @@ export class CustomerAccountService {
   // configuration — called when a customer picks a saved address at
   // checkout, since the city may have been disabled or its fee changed
   // since the address was saved (the stored address never carries a fee).
-  async revalidateAddressForStore(slug: string, user: AuthUser, addressId: string) {
+  async revalidateAddressForStore(
+    slug: string,
+    user: AuthUser,
+    addressId: string,
+  ) {
     const store = await this.getStoreOrThrow(slug);
     this.assertCustomerOfStore(store.id, user);
     const address = await this.getAddressOrThrow(user, addressId);
     if (!address.cityId || !address.city?.isActive) {
-      throw new BadRequestException('هذه المدينة لم تعد متاحة، يرجى اختيار مدينة أخرى');
+      throw new BadRequestException(
+        'هذه المدينة لم تعد متاحة، يرجى اختيار مدينة أخرى',
+      );
     }
     const zone = await this.prisma.shippingZone.findUnique({
       where: {
@@ -676,8 +733,14 @@ export class CustomerAccountService {
       deliveryFee: Number(zone.cost),
       currencyCode: zone.currencyCode,
       estimatedDeliveryTime: zone.estimatedDeliveryTime,
-      freeDeliveryMinimum: zone.freeDeliveryMinimum != null ? Number(zone.freeDeliveryMinimum) : null,
-      minimumOrderAmount: zone.minimumOrderAmount != null ? Number(zone.minimumOrderAmount) : null,
+      freeDeliveryMinimum:
+        zone.freeDeliveryMinimum != null
+          ? Number(zone.freeDeliveryMinimum)
+          : null,
+      minimumOrderAmount:
+        zone.minimumOrderAmount != null
+          ? Number(zone.minimumOrderAmount)
+          : null,
     };
   }
 }

@@ -8,6 +8,7 @@ import { Prisma, Role } from '../../generated/prisma';
 import { CustomerAccountService } from './account.service';
 import { InventoryService } from '../inventory/inventory.service';
 import type { AuthUser } from '../common/decorators/current-user.decorator';
+import { mailStub } from '../mail/testing/mail-stub';
 
 const STORE = {
   id: 'store-1',
@@ -96,6 +97,7 @@ describe('CustomerAccountService', () => {
     $transaction: jest.Mock;
   };
   let service: CustomerAccountService;
+  let mail: ReturnType<typeof mailStub>;
 
   beforeEach(() => {
     prisma = {
@@ -123,9 +125,11 @@ describe('CustomerAccountService', () => {
       stockReservation: { findMany: jest.fn().mockResolvedValue([]) },
       $transaction: jest.fn((fn: (tx: unknown) => unknown) => fn(prisma)),
     };
+    mail = mailStub();
     service = new CustomerAccountService(
       prisma as never,
       new InventoryService(),
+      mail,
     );
   });
 
@@ -192,6 +196,70 @@ describe('CustomerAccountService', () => {
     );
   });
 
+  describe('cancellation emails', () => {
+    beforeEach(() => {
+      prisma.order.findFirst.mockResolvedValue({
+        id: 'order-1',
+        status: 'PENDING',
+      });
+      prisma.order.update.mockResolvedValue(
+        buildOrder({ status: 'CANCELLED', items: [], _count: { items: 0 } }),
+      );
+    });
+
+    it('notifies both the customer and the merchant after cancelling', async () => {
+      await service.cancelOrder('slug', buildUser(), 'order-1', {
+        reason: 'ORDERED_BY_MISTAKE',
+      });
+      expect(mail.sendOrderCancelledByCustomer).toHaveBeenCalledWith(
+        'order-1',
+        'تم الطلب بالخطأ',
+        undefined,
+      );
+    });
+
+    it('translates the reason code rather than emailing the raw enum', async () => {
+      await service.cancelOrder('slug', buildUser(), 'order-1', {
+        reason: 'DELIVERY_TOO_LONG',
+      });
+      expect(mail.sendOrderCancelledByCustomer.mock.calls[0][1]).toBe(
+        'مدة التوصيل طويلة',
+      );
+    });
+
+    it('passes the customer note through', async () => {
+      await service.cancelOrder('slug', buildUser(), 'order-1', {
+        reason: 'OTHER',
+        note: 'غيرت رأيي',
+      });
+      expect(mail.sendOrderCancelledByCustomer.mock.calls[0][2]).toBe(
+        'غيرت رأيي',
+      );
+    });
+
+    it('does not email when cancellation is rejected', async () => {
+      prisma.order.findFirst.mockResolvedValue({
+        id: 'order-1',
+        status: 'DELIVERED',
+      });
+      await expect(
+        service.cancelOrder('slug', buildUser(), 'order-1', {
+          reason: 'OTHER',
+        }),
+      ).rejects.toThrow(ConflictException);
+      expect(mail.sendOrderCancelledByCustomer).not.toHaveBeenCalled();
+    });
+
+    it('survives a mail failure without failing the cancellation', async () => {
+      mail.sendOrderCancelledByCustomer.mockRejectedValue(new Error('down'));
+      await expect(
+        service.cancelOrder('slug', buildUser(), 'order-1', {
+          reason: 'OTHER',
+        }),
+      ).resolves.toBeDefined();
+    });
+  });
+
   describe('getOrder', () => {
     it('throws NotFoundException when scoped lookup misses', async () => {
       prisma.order.findFirst.mockResolvedValue(null);
@@ -217,7 +285,10 @@ describe('CustomerAccountService', () => {
 
   describe('createAddress', () => {
     it('rejects when the city does not belong to the given governorate', async () => {
-      prisma.city.findUnique.mockResolvedValue({ ...CITY, governorate: 'ALEPPO' });
+      prisma.city.findUnique.mockResolvedValue({
+        ...CITY,
+        governorate: 'ALEPPO',
+      });
       await expect(
         service.createAddress('slug', buildUser(), {
           governorate: 'RIF_DIMASHQ',
@@ -230,7 +301,9 @@ describe('CustomerAccountService', () => {
 
     it('marks the first address for a customer as default automatically', async () => {
       prisma.customerAddress.count.mockResolvedValue(0);
-      prisma.customerAddress.create.mockResolvedValue(buildAddress({ isDefault: true }));
+      prisma.customerAddress.create.mockResolvedValue(
+        buildAddress({ isDefault: true }),
+      );
       await service.createAddress('slug', buildUser(), {
         governorate: 'RIF_DIMASHQ',
         cityId: CITY.id,
@@ -238,13 +311,17 @@ describe('CustomerAccountService', () => {
         phone: '0999999999',
       });
       expect(prisma.customerAddress.create).toHaveBeenCalledWith(
-        expect.objectContaining({ data: expect.objectContaining({ isDefault: true }) }),
+        expect.objectContaining({
+          data: expect.objectContaining({ isDefault: true }),
+        }),
       );
     });
 
     it('unsets other default addresses when creating a new default one', async () => {
       prisma.customerAddress.count.mockResolvedValue(1);
-      prisma.customerAddress.create.mockResolvedValue(buildAddress({ isDefault: true }));
+      prisma.customerAddress.create.mockResolvedValue(
+        buildAddress({ isDefault: true }),
+      );
       await service.createAddress('slug', buildUser(), {
         governorate: 'RIF_DIMASHQ',
         cityId: CITY.id,
@@ -275,7 +352,9 @@ describe('CustomerAccountService', () => {
     });
 
     it('promotes the most recent remaining address to default after deleting the default one', async () => {
-      prisma.customerAddress.findUnique.mockResolvedValue(buildAddress({ isDefault: true }));
+      prisma.customerAddress.findUnique.mockResolvedValue(
+        buildAddress({ isDefault: true }),
+      );
       prisma.customerAddress.findFirst.mockResolvedValue({ id: 'address-2' });
       await service.deleteAddress('slug', buildUser(), 'address-1');
       expect(prisma.customerAddress.update).toHaveBeenCalledWith({

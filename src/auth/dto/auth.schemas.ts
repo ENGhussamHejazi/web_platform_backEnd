@@ -1,9 +1,10 @@
 import { z } from 'zod';
 import { STORE_BUSINESS_CATEGORIES } from '../../entitlements/business-categories';
+import { trustedEmailSchema } from '../../common/email.validation';
 
 export const registerCustomerSchema = z.object({
   name: z.string().min(2, 'الاسم قصير جداً').max(100),
-  email: z.string().email('البريد الإلكتروني غير صالح'),
+  email: trustedEmailSchema,
   password: z.string().min(8, 'كلمة المرور يجب أن تكون 8 أحرف على الأقل'),
   phone: z
     .string()
@@ -14,7 +15,7 @@ export type RegisterCustomerDto = z.infer<typeof registerCustomerSchema>;
 
 export const registerMerchantSchema = z.object({
   name: z.string().min(2, 'الاسم قصير جداً').max(100),
-  email: z.string().email('البريد الإلكتروني غير صالح'),
+  email: trustedEmailSchema,
   password: z.string().min(8, 'كلمة المرور يجب أن تكون 8 أحرف على الأقل'),
   phone: z
     .string()
@@ -47,7 +48,7 @@ export const registerMerchantSchema = z.object({
 export type RegisterMerchantDto = z.infer<typeof registerMerchantSchema>;
 
 export const loginSchema = z.object({
-  email: z.string().email('البريد الإلكتروني غير صالح'),
+  email: z.string().trim().toLowerCase().email('البريد الإلكتروني غير صالح'),
   password: z.string().min(1, 'كلمة المرور مطلوبة'),
 });
 export type LoginDto = z.infer<typeof loginSchema>;

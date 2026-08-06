@@ -31,6 +31,22 @@ import type { StoredFile } from '../storage/storage.interface';
 
 const EDITABLE_STATUSES: ApplicationStatus[] = ['DRAFT', 'CHANGES_REQUESTED'];
 
+/**
+ * Documents that must be on file before an application can be submitted.
+ * Mirrored in the frontend wizard (applicationValidation.ts) — keep in sync.
+ */
+const REQUIRED_DOCUMENT_TYPES: Record<string, string[]> = {
+  PHYSICAL_STORE_OWNER: ['identity', 'commercial_registration'],
+  ONLINE_SELLER: ['identity'],
+};
+
+const DOCUMENT_TYPE_LABELS: Record<string, string> = {
+  identity: 'الهوية الشخصية',
+  commercial_registration: 'السجل التجاري',
+  tax_number: 'الرقم الضريبي',
+  business_license: 'رخصة العمل',
+};
+
 @Injectable()
 export class StoreApplicationsService {
   constructor(
@@ -593,10 +609,12 @@ export class StoreApplicationsService {
   }
 
   private ensureCompleteForSubmission(application: {
+    merchantType: string;
     accountInfo: unknown;
     storeInfo: unknown;
     businessInfo: unknown;
     shippingInfo: unknown;
+    documents: { type: string }[];
   }) {
     const account = (application.accountInfo ?? {}) as Record<string, unknown>;
     const store = (application.storeInfo ?? {}) as Record<string, unknown>;
@@ -610,15 +628,60 @@ export class StoreApplicationsService {
     >;
 
     const missing: string[] = [];
+    const blank = (v: unknown) =>
+      v === undefined || v === null || (typeof v === 'string' && !v.trim());
+    const require = (v: unknown, label: string) => {
+      if (blank(v)) missing.push(label);
+    };
+
+    // Step 1 — account
+    require(account.whatsapp, 'رقم الواتساب');
+    require(account.country, 'الدولة');
+    require(account.city, 'المدينة');
+    require(account.preferredContactMethod, 'وسيلة التواصل المفضلة');
     if (!account.termsAccepted) missing.push('الموافقة على الشروط والأحكام');
     if (!account.privacyAccepted) missing.push('الموافقة على سياسة الخصوصية');
-    if (!store.nameAr) missing.push('اسم المتجر بالعربية');
-    if (!store.category) missing.push('التصنيف التجاري');
-    if (!store.csPhone) missing.push('رقم هاتف خدمة العملاء');
-    if (!store.currency) missing.push('العملة');
-    if (Object.keys(business).length === 0)
-      missing.push('معلومات النشاط التجاري');
-    if (!shipping.deliveryMethod) missing.push('طريقة التوصيل');
+
+    // Step 2 — store
+    require(store.nameAr, 'اسم المتجر بالعربية');
+    require(store.category, 'التصنيف التجاري');
+    require(store.description, 'وصف المتجر');
+    require(store.csPhone, 'رقم هاتف خدمة العملاء');
+    require(store.currency, 'العملة');
+
+    // Step 3 — business activity (fields differ per merchant type)
+    if (application.merchantType === 'PHYSICAL_STORE_OWNER') {
+      require(business.legalBusinessName, 'الاسم التجاري القانوني');
+      require(business.physicalStoreName, 'اسم المتجر الفعلي');
+      require(business.mainBranchAddress, 'عنوان الفرع الرئيسي');
+      require(business.openingTime, 'وقت الفتح');
+      require(business.closingTime, 'وقت الإغلاق');
+      if (blank(business.branchCount) || Number(business.branchCount) < 1) {
+        missing.push('عدد الفروع');
+      }
+    } else {
+      require(business.sellingModel, 'نموذج البيع');
+      require(business.productSource, 'مصدر المنتجات');
+      require(business.avgOrderPrepTime, 'متوسط زمن تجهيز الطلب');
+    }
+
+    // Step 4 — shipping. Pickup-only stores are exempt from the delivery
+    // fee / delivery time, which don't apply to them.
+    require(shipping.deliveryMethod, 'طريقة التوصيل');
+    require(shipping.avgPrepTime, 'متوسط وقت التجهيز');
+    require(shipping.returnPolicy, 'سياسة الاستبدال والاسترجاع');
+    require(shipping.shippingPolicy, 'سياسة الشحن');
+    if (shipping.deliveryMethod !== 'store_pickup') {
+      require(shipping.deliveryFee, 'تكلفة التوصيل');
+      require(shipping.avgDeliveryTime, 'متوسط وقت التوصيل');
+    }
+
+    // Step 5 — mandatory documents
+    const uploaded = new Set(application.documents.map((d) => d.type));
+    for (const type of REQUIRED_DOCUMENT_TYPES[application.merchantType] ??
+      REQUIRED_DOCUMENT_TYPES.ONLINE_SELLER) {
+      if (!uploaded.has(type)) missing.push(DOCUMENT_TYPE_LABELS[type] ?? type);
+    }
 
     if (missing.length > 0) {
       throw new BadRequestException({
@@ -718,6 +781,7 @@ export class StoreApplicationsService {
       type,
       applicationId: full.id,
       submissionVersion: full.submissionVersion,
+      storeId: full.storeId,
       recipientUserId: full.userId,
       recipientEmail: full.user.email,
       subject: template.subject,

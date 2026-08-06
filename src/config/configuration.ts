@@ -82,7 +82,7 @@ export default (): AppConfig => ({
   },
   sms: {
     driver: process.env.SMS_DRIVER ?? 'log',
-    senderId: process.env.SMS_SENDER_ID ?? 'SouqSyria',
+    senderId: process.env.SMS_SENDER_ID ?? 'TRENDWA',
     apiKey: process.env.SMS_API_KEY,
     apiUrl: process.env.SMS_API_URL,
   },
@@ -112,7 +112,7 @@ export default (): AppConfig => ({
     pass: process.env.MAIL_PASS,
     brevoApiKey: process.env.BREVO_API_KEY,
     fromAddress: process.env.MAIL_FROM_ADDRESS ?? 'HUSSA.HEJAZI17@GMAIL.COM',
-    fromName: process.env.MAIL_FROM_NAME ?? 'Souq Syria — Store Applications',
+    fromName: process.env.MAIL_FROM_NAME ?? 'TRENDWA — Store Applications',
   },
   frontendBaseUrl: process.env.FRONTEND_BASE_URL ?? 'http://localhost:5173',
   monitoring: {

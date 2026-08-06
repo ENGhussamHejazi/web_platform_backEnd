@@ -4,6 +4,7 @@ import { StorefrontService } from './storefront.service';
 import { InventoryService } from '../inventory/inventory.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { MessagingGateway } from '../messaging/messaging.gateway';
+import { mailStub } from '../mail/testing/mail-stub';
 
 function buildProduct(overrides: Partial<Record<string, unknown>> = {}) {
   return {
@@ -32,7 +33,11 @@ describe('StorefrontService', () => {
     };
     orderItem: { groupBy: jest.Mock; create: jest.Mock; createMany: jest.Mock };
     homepageSection: { findMany: jest.Mock };
-    shippingZone: { findMany: jest.Mock; findUnique: jest.Mock; findFirst: jest.Mock };
+    shippingZone: {
+      findMany: jest.Mock;
+      findUnique: jest.Mock;
+      findFirst: jest.Mock;
+    };
     order: { create: jest.Mock; findUniqueOrThrow: jest.Mock };
     warehouse: { findFirst: jest.Mock; create: jest.Mock };
     inventoryItem: {
@@ -48,6 +53,7 @@ describe('StorefrontService', () => {
     $transaction: jest.Mock;
   };
   let service: StorefrontService;
+  let mail: ReturnType<typeof mailStub>;
 
   beforeEach(() => {
     prisma = {
@@ -67,7 +73,11 @@ describe('StorefrontService', () => {
         createMany: jest.fn().mockResolvedValue({ count: 0 }),
       },
       homepageSection: { findMany: jest.fn() },
-      shippingZone: { findMany: jest.fn(), findUnique: jest.fn(), findFirst: jest.fn() },
+      shippingZone: {
+        findMany: jest.fn(),
+        findUnique: jest.fn(),
+        findFirst: jest.fn(),
+      },
       order: { create: jest.fn(), findUniqueOrThrow: jest.fn() },
       warehouse: {
         findFirst: jest
@@ -87,11 +97,13 @@ describe('StorefrontService', () => {
       loyaltyPointTransaction: { create: jest.fn() },
       $transaction: jest.fn(async (fn: (tx: unknown) => unknown) => fn(prisma)),
     };
+    mail = mailStub();
     service = new StorefrontService(
       prisma as never,
       new InventoryService(),
       { create: jest.fn() } as unknown as NotificationsService,
       { emitNewOrder: jest.fn() } as unknown as MessagingGateway,
+      mail,
     );
   });
 
@@ -292,6 +304,61 @@ describe('StorefrontService', () => {
       prisma.store.findUnique.mockResolvedValue(activeStore);
     });
 
+    /** Arranges the mocks needed for a checkout that succeeds. */
+    function arrangeSuccessfulCheckout() {
+      prisma.product.findMany.mockResolvedValue([
+        buildProduct({ price: new Prisma.Decimal(100) }),
+      ]);
+      prisma.inventoryItem.findFirst.mockResolvedValue({
+        id: 'inv-1',
+        quantity: new Prisma.Decimal(5),
+        reserved: new Prisma.Decimal(0),
+        available: new Prisma.Decimal(5),
+      });
+      prisma.inventoryItem.updateMany.mockResolvedValue({ count: 1 });
+      prisma.shippingZone.findFirst.mockResolvedValue({
+        cost: new Prisma.Decimal(15),
+      });
+      prisma.order.create.mockResolvedValue({ id: 'order-1' });
+      prisma.order.findUniqueOrThrow.mockResolvedValue({
+        id: 'order-1',
+        status: 'PENDING',
+        subtotal: new Prisma.Decimal(200),
+        shippingCost: new Prisma.Decimal(15),
+        total: new Prisma.Decimal(215),
+        loyaltyDiscount: new Prisma.Decimal(0),
+        pointsRedeemed: 0,
+        governorate: 'DAMASCUS',
+        shippingAddress: 'دمشق - شارع الثورة',
+        createdAt: new Date(),
+        items: [],
+      });
+    }
+
+    it('emails the buyer and the merchant once the order is committed', async () => {
+      arrangeSuccessfulCheckout();
+      await service.createGuestOrder('my-store', baseDto);
+      expect(mail.sendOrderPlaced).toHaveBeenCalledWith('order-1');
+    });
+
+    it('does not email when checkout is rejected before an order exists', async () => {
+      prisma.product.findMany.mockResolvedValue([
+        buildProduct({ isActive: false }),
+      ]);
+      await expect(
+        service.createGuestOrder('my-store', baseDto),
+      ).rejects.toThrow(BadRequestException);
+      expect(mail.sendOrderPlaced).not.toHaveBeenCalled();
+    });
+
+    it('does not let a mail failure break a placed order', async () => {
+      arrangeSuccessfulCheckout();
+      mail.sendOrderPlaced.mockRejectedValue(new Error('mail down'));
+      await expect(
+        service.createGuestOrder('my-store', baseDto),
+      ).resolves.toBeDefined();
+    });
+
     it('rejects when a product is inactive or missing', async () => {
       prisma.product.findMany.mockResolvedValue([
         buildProduct({ isActive: false }),
@@ -302,7 +369,9 @@ describe('StorefrontService', () => {
     });
 
     it('rejects when requested quantity exceeds stock', async () => {
-      prisma.product.findMany.mockResolvedValue([buildProduct({ stock: new Prisma.Decimal(1) })]);
+      prisma.product.findMany.mockResolvedValue([
+        buildProduct({ stock: new Prisma.Decimal(1) }),
+      ]);
       await expect(
         service.createGuestOrder('my-store', baseDto),
       ).rejects.toThrow(BadRequestException);
@@ -409,7 +478,14 @@ describe('StorefrontService', () => {
           governorate: orderData2.governorate,
           shippingAddress: orderData2.shippingAddress,
           createdAt: new Date(),
-          items: [{ id: 'item-1', productName: 'منتج تجريبي', quantity: 2, price: new Prisma.Decimal(100) }],
+          items: [
+            {
+              id: 'item-1',
+              productName: 'منتج تجريبي',
+              quantity: 2,
+              price: new Prisma.Decimal(100),
+            },
+          ],
         }),
       );
 
@@ -422,7 +498,11 @@ describe('StorefrontService', () => {
       expect(result.loyaltyDiscount).toBe(30);
       expect(result.total).toBe(185);
       expect(prisma.user.updateMany).toHaveBeenCalledWith({
-        where: { id: 'customer-1', storeId: 'store-1', loyaltyPoints: { gte: 20 } },
+        where: {
+          id: 'customer-1',
+          storeId: 'store-1',
+          loyaltyPoints: { gte: 20 },
+        },
         data: { loyaltyPoints: { decrement: 20 } },
       });
       expect(prisma.loyaltyPointTransaction.create).toHaveBeenCalledWith({
@@ -444,22 +524,31 @@ describe('StorefrontService', () => {
         loyaltyDiscountPercentage: 15,
       });
       prisma.product.findMany.mockResolvedValue([buildProduct()]);
-      prisma.inventoryItem.findFirst.mockResolvedValue({ id: 'inv-1', quantity: new Prisma.Decimal(5), reserved: new Prisma.Decimal(0), available: new Prisma.Decimal(5) });
+      prisma.inventoryItem.findFirst.mockResolvedValue({
+        id: 'inv-1',
+        quantity: new Prisma.Decimal(5),
+        reserved: new Prisma.Decimal(0),
+        available: new Prisma.Decimal(5),
+      });
       prisma.inventoryItem.updateMany.mockResolvedValue({ count: 1 });
       prisma.shippingZone.findFirst.mockResolvedValue(null);
       prisma.order.create.mockResolvedValue({ id: 'order-1' });
       prisma.user.updateMany.mockResolvedValue({ count: 0 });
 
-      await expect(service.createGuestOrder(
-        'my-store',
-        { ...baseDto, redeemLoyaltyReward: true },
-        { id: 'customer-1', role: 'CUSTOMER', storeId: 'store-1' } as never,
-      )).rejects.toThrow('رصيد نقاطك غير كافٍ');
+      await expect(
+        service.createGuestOrder(
+          'my-store',
+          { ...baseDto, redeemLoyaltyReward: true },
+          { id: 'customer-1', role: 'CUSTOMER', storeId: 'store-1' } as never,
+        ),
+      ).rejects.toThrow('رصيد نقاطك غير كافٍ');
       expect(prisma.loyaltyPointTransaction.create).not.toHaveBeenCalled();
     });
 
     it('throws when the atomic stock reservation finds insufficient available stock (race)', async () => {
-      prisma.product.findMany.mockResolvedValue([buildProduct({ stock: new Prisma.Decimal(5) })]);
+      prisma.product.findMany.mockResolvedValue([
+        buildProduct({ stock: new Prisma.Decimal(5) }),
+      ]);
       prisma.inventoryItem.findFirst.mockResolvedValue({
         id: 'inv-1',
         quantity: new Prisma.Decimal(5),

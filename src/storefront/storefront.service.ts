@@ -9,6 +9,10 @@ import { InventoryService } from '../inventory/inventory.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { MessagingGateway } from '../messaging/messaging.gateway';
 import {
+  NOOP,
+  TransactionalMailService,
+} from '../mail/transactional-mail.service';
+import {
   Governorate,
   OrderStatus,
   Prisma,
@@ -221,6 +225,7 @@ export class StorefrontService {
     private readonly inventory: InventoryService,
     private readonly notifications: NotificationsService,
     private readonly messagingGateway: MessagingGateway,
+    private readonly mail: TransactionalMailService,
   ) {}
 
   private getCachedActiveStoreId(slug: string) {
@@ -277,7 +282,9 @@ export class StorefrontService {
         product.compareAtPrice === null ? null : Number(product.compareAtPrice),
       stock: Number(product.stock),
       minOrderQuantity:
-        product.minOrderQuantity == null ? null : Number(product.minOrderQuantity),
+        product.minOrderQuantity == null
+          ? null
+          : Number(product.minOrderQuantity),
       stepQuantity:
         product.stepQuantity == null ? null : Number(product.stepQuantity),
       variants: product.variants?.map((v) => ({
@@ -604,7 +611,9 @@ export class StorefrontService {
     const store = await this.getActiveStoreOrThrow(slug);
     if (
       !governorate ||
-      !GOVERNORATE_VALUES.includes(governorate as (typeof GOVERNORATE_VALUES)[number])
+      !GOVERNORATE_VALUES.includes(
+        governorate as (typeof GOVERNORATE_VALUES)[number],
+      )
     ) {
       throw new BadRequestException('يجب اختيار محافظة صالحة');
     }
@@ -637,9 +646,13 @@ export class StorefrontService {
           currencyCode: rate.currencyCode,
           estimatedDeliveryTime: rate.estimatedDeliveryTime,
           freeDeliveryMinimum:
-            rate.freeDeliveryMinimum != null ? Number(rate.freeDeliveryMinimum) : null,
+            rate.freeDeliveryMinimum != null
+              ? Number(rate.freeDeliveryMinimum)
+              : null,
           minimumOrderAmount:
-            rate.minimumOrderAmount != null ? Number(rate.minimumOrderAmount) : null,
+            rate.minimumOrderAmount != null
+              ? Number(rate.minimumOrderAmount)
+              : null,
         },
       ];
     });
@@ -661,7 +674,9 @@ export class StorefrontService {
       total: Number(order.total),
       loyaltyDiscount: Number(order.loyaltyDiscount),
       usdToSypRateSnapshot:
-        order.usdToSypRateSnapshot === null ? null : Number(order.usdToSypRateSnapshot),
+        order.usdToSypRateSnapshot === null
+          ? null
+          : Number(order.usdToSypRateSnapshot),
       items: order.items.map((i) => ({
         ...i,
         price: Number(i.price),
@@ -932,21 +947,27 @@ export class StorefrontService {
         // City-level pricing: the frontend sends the exact city the customer
         // picked, and the backend is the sole source of truth for the fee —
         // never trust a price sent from the client.
-        const city = await this.prisma.city.findUnique({ where: { id: dto.cityId } });
+        const city = await this.prisma.city.findUnique({
+          where: { id: dto.cityId },
+        });
         if (!city || city.governorate !== dto.governorate) {
-          throw new BadRequestException('المدينة المختارة لا تنتمي إلى المحافظة المحددة');
+          throw new BadRequestException(
+            'المدينة المختارة لا تنتمي إلى المحافظة المحددة',
+          );
         }
         zone = await this.prisma.shippingZone.findUnique({
           where: {
             storeId_governorate_cityId: {
               storeId: store.id,
-              governorate: dto.governorate!,
+              governorate: dto.governorate,
               cityId: dto.cityId,
             },
           },
         });
         if (!zone || !zone.isDeliveryAvailable) {
-          throw new BadRequestException('التوصيل غير متاح إلى هذه المدينة حالياً');
+          throw new BadRequestException(
+            'التوصيل غير متاح إلى هذه المدينة حالياً',
+          );
         }
         cityNameSnapshot = city.nameAr;
       } else {
@@ -963,13 +984,19 @@ export class StorefrontService {
       }
     }
 
-    if (zone?.minimumOrderAmount != null && subtotal.lessThan(zone.minimumOrderAmount)) {
+    if (
+      zone?.minimumOrderAmount != null &&
+      subtotal.lessThan(zone.minimumOrderAmount)
+    ) {
       throw new BadRequestException(
         `الحد الأدنى لهذا الطلب هو ${Number(zone.minimumOrderAmount)} ${zone.currencyCode}`,
       );
     }
     let shippingCost = zone ? zone.cost : new Prisma.Decimal(0);
-    if (zone?.freeDeliveryMinimum != null && subtotal.greaterThanOrEqualTo(zone.freeDeliveryMinimum)) {
+    if (
+      zone?.freeDeliveryMinimum != null &&
+      subtotal.greaterThanOrEqualTo(zone.freeDeliveryMinimum)
+    ) {
       shippingCost = new Prisma.Decimal(0);
     }
 
@@ -1005,7 +1032,11 @@ export class StorefrontService {
         store.usdToSypRate,
         store.pickupAddress,
         zone
-          ? { id: zone.id, cityId: zone.cityId, estimatedDeliveryTime: zone.estimatedDeliveryTime }
+          ? {
+              id: zone.id,
+              cityId: zone.cityId,
+              estimatedDeliveryTime: zone.estimatedDeliveryTime,
+            }
           : null,
         cityNameSnapshot,
       );
@@ -1036,9 +1067,18 @@ export class StorefrontService {
 
     // Best-effort: alerts the merchant (and drives their dashboard "new
     // order" sound) — never let a notification hiccup fail a placed order.
-    this.notifyOwnerOfNewOrder(store.id, order.id, dto.guestName, total, store.currency).catch(
-      () => {},
-    );
+    this.notifyOwnerOfNewOrder(
+      store.id,
+      order.id,
+      dto.guestName,
+      total,
+      store.currency,
+    ).catch(() => {});
+
+    // Order confirmation to the buyer + new-order alert to the store owner.
+    // Fired after the checkout transaction committed and deliberately not
+    // awaited, so SMTP latency never shows up in the checkout response.
+    this.mail.sendOrderPlaced(order.id).catch(NOOP);
 
     return this.toOrderDto(order);
   }
@@ -1055,7 +1095,11 @@ export class StorefrontService {
     pointsToRedeem = 0,
     usdToSypRate?: Prisma.Decimal | null,
     pickupAddress?: string | null,
-    zoneSnapshot?: { id: string; cityId: string | null; estimatedDeliveryTime: string | null } | null,
+    zoneSnapshot?: {
+      id: string;
+      cityId: string | null;
+      estimatedDeliveryTime: string | null;
+    } | null,
     cityNameSnapshot?: string | null,
   ): Promise<Prisma.OrderGetPayload<{ select: typeof ORDER_RESPONSE_SELECT }>> {
     const detailParts = [
@@ -1067,154 +1111,159 @@ export class StorefrontService {
       dto.addressNotes ?? null,
     ].filter((part): part is string => Boolean(part));
 
-    return this.prisma.$transaction(async (tx) => {
-      const order = await tx.order.create({
-        data: {
-          storeId,
-          customerId,
-          guestName: dto.guestName,
-          guestPhone: dto.guestPhone,
-          guestEmail: dto.guestEmail,
-          clientRequestId: dto.clientRequestId,
-          subtotal,
-          shippingCost,
-          total,
-          loyaltyDiscount,
-          pointsRedeemed: pointsToRedeem,
-          usdToSypRateSnapshot: usdToSypRate,
-          fulfillmentType: dto.fulfillmentType ?? 'DELIVERY',
-          shippingAddress:
-            dto.fulfillmentType === 'PICKUP'
-              ? (pickupAddress ?? 'استلام من المتجر')
-              : detailParts.join(' — '),
-          governorate: dto.fulfillmentType === 'PICKUP' ? 'DAMASCUS' : dto.governorate!,
-          cityId: zoneSnapshot?.cityId ?? null,
-          cityNameSnapshot: cityNameSnapshot ?? null,
-          estimatedDeliveryTimeSnapshot: zoneSnapshot?.estimatedDeliveryTime ?? null,
-          shippingZoneId: zoneSnapshot?.id ?? null,
-        },
-        select: { id: true },
-      });
-
-      if (pointsToRedeem > 0 && customerId) {
-        const deducted = await tx.user.updateMany({
-          where: {
-            id: customerId,
-            storeId,
-            loyaltyPoints: { gte: pointsToRedeem },
-          },
-          data: { loyaltyPoints: { decrement: pointsToRedeem } },
-        });
-        if (deducted.count !== 1) {
-          throw new BadRequestException(
-            'رصيد نقاطك غير كافٍ لاستخدام هذا الخصم',
-          );
-        }
-        await tx.loyaltyPointTransaction.create({
+    return this.prisma.$transaction(
+      async (tx) => {
+        const order = await tx.order.create({
           data: {
             storeId,
             customerId,
-            orderId: order.id,
-            points: pointsToRedeem,
-            type: 'REDEEMED',
+            guestName: dto.guestName,
+            guestPhone: dto.guestPhone,
+            guestEmail: dto.guestEmail,
+            clientRequestId: dto.clientRequestId,
+            subtotal,
+            shippingCost,
+            total,
+            loyaltyDiscount,
+            pointsRedeemed: pointsToRedeem,
+            usdToSypRateSnapshot: usdToSypRate,
+            fulfillmentType: dto.fulfillmentType ?? 'DELIVERY',
+            shippingAddress:
+              dto.fulfillmentType === 'PICKUP'
+                ? (pickupAddress ?? 'استلام من المتجر')
+                : detailParts.join(' — '),
+            governorate:
+              dto.fulfillmentType === 'PICKUP' ? 'DAMASCUS' : dto.governorate!,
+            cityId: zoneSnapshot?.cityId ?? null,
+            cityNameSnapshot: cityNameSnapshot ?? null,
+            estimatedDeliveryTimeSnapshot:
+              zoneSnapshot?.estimatedDeliveryTime ?? null,
+            shippingZoneId: zoneSnapshot?.id ?? null,
           },
+          select: { id: true },
         });
-      }
 
-      // Flat list of (productId, quantity) rows to reserve stock for —
-      // box lines contribute the box itself plus every chosen child.
-      const stockLines: {
-        productId: string;
-        variantId?: string;
-        productName: string;
-        quantity: number;
-      }[] = [];
+        if (pointsToRedeem > 0 && customerId) {
+          const deducted = await tx.user.updateMany({
+            where: {
+              id: customerId,
+              storeId,
+              loyaltyPoints: { gte: pointsToRedeem },
+            },
+            data: { loyaltyPoints: { decrement: pointsToRedeem } },
+          });
+          if (deducted.count !== 1) {
+            throw new BadRequestException(
+              'رصيد نقاطك غير كافٍ لاستخدام هذا الخصم',
+            );
+          }
+          await tx.loyaltyPointTransaction.create({
+            data: {
+              storeId,
+              customerId,
+              orderId: order.id,
+              points: pointsToRedeem,
+              type: 'REDEEMED',
+            },
+          });
+        }
 
-      // IDs are minted client-side (rather than left to the DB default) so
-      // every row — including a box's children — can be built into one
-      // batched createMany call instead of one round-trip per line; each
-      // extra round-trip against Neon risked blowing past Prisma's 5s
-      // interactive-transaction timeout on carts with several box items.
-      const itemRows: Prisma.OrderItemCreateManyInput[] = [];
-      for (const line of orderLines) {
-        if (line.kind === 'simple') {
+        // Flat list of (productId, quantity) rows to reserve stock for —
+        // box lines contribute the box itself plus every chosen child.
+        const stockLines: {
+          productId: string;
+          variantId?: string;
+          productName: string;
+          quantity: number;
+        }[] = [];
+
+        // IDs are minted client-side (rather than left to the DB default) so
+        // every row — including a box's children — can be built into one
+        // batched createMany call instead of one round-trip per line; each
+        // extra round-trip against Neon risked blowing past Prisma's 5s
+        // interactive-transaction timeout on carts with several box items.
+        const itemRows: Prisma.OrderItemCreateManyInput[] = [];
+        for (const line of orderLines) {
+          if (line.kind === 'simple') {
+            itemRows.push({
+              id: crypto.randomUUID(),
+              orderId: order.id,
+              productId: line.productId,
+              productName: line.productName,
+              variantId: line.variantId,
+              variantLabel: line.variantLabel,
+              quantity: line.quantity,
+              price: line.price,
+            });
+            stockLines.push({
+              productId: line.productId,
+              variantId: line.variantId,
+              productName: line.productName,
+              quantity: line.quantity,
+            });
+            continue;
+          }
+
+          // Box line: the box's own row first, then its chosen contents as
+          // child rows pointing back at it via parentOrderItemId.
+          const parentId = crypto.randomUUID();
           itemRows.push({
-            id: crypto.randomUUID(),
+            id: parentId,
             orderId: order.id,
             productId: line.productId,
             productName: line.productName,
-            variantId: line.variantId,
-            variantLabel: line.variantLabel,
             quantity: line.quantity,
             price: line.price,
           });
           stockLines.push({
             productId: line.productId,
-            variantId: line.variantId,
             productName: line.productName,
             quantity: line.quantity,
           });
-          continue;
+          for (const child of line.children) {
+            itemRows.push({
+              id: crypto.randomUUID(),
+              orderId: order.id,
+              parentOrderItemId: parentId,
+              productId: child.productId,
+              productName: child.productName,
+              quantity: child.quantity,
+              price: child.price,
+            });
+            stockLines.push({
+              productId: child.productId,
+              productName: child.productName,
+              quantity: child.quantity,
+            });
+          }
         }
+        await tx.orderItem.createMany({ data: itemRows });
 
-        // Box line: the box's own row first, then its chosen contents as
-        // child rows pointing back at it via parentOrderItemId.
-        const parentId = crypto.randomUUID();
-        itemRows.push({
-          id: parentId,
-          orderId: order.id,
-          productId: line.productId,
-          productName: line.productName,
-          quantity: line.quantity,
-          price: line.price,
-        });
-        stockLines.push({
-          productId: line.productId,
-          productName: line.productName,
-          quantity: line.quantity,
-        });
-        for (const child of line.children) {
-          itemRows.push({
-            id: crypto.randomUUID(),
+        // Reserve stock (available -> reserved) per item, inside the same
+        // transaction as order creation, so a stock shortfall rolls the whole
+        // order back — matches the atomicity the old direct-decrement had.
+        for (const item of stockLines) {
+          await this.inventory.reserveForOrder(tx, {
+            storeId,
+            productId: item.productId,
+            variantId: item.variantId,
+            productName: item.productName,
+            quantity: item.quantity,
             orderId: order.id,
-            parentOrderItemId: parentId,
-            productId: child.productId,
-            productName: child.productName,
-            quantity: child.quantity,
-            price: child.price,
           });
-          stockLines.push({
-            productId: child.productId,
-            productName: child.productName,
-            quantity: child.quantity,
+          await tx.product.update({
+            where: { id: item.productId },
+            data: { totalSold: { increment: item.quantity } },
           });
         }
-      }
-      await tx.orderItem.createMany({ data: itemRows });
 
-      // Reserve stock (available -> reserved) per item, inside the same
-      // transaction as order creation, so a stock shortfall rolls the whole
-      // order back — matches the atomicity the old direct-decrement had.
-      for (const item of stockLines) {
-        await this.inventory.reserveForOrder(tx, {
-          storeId,
-          productId: item.productId,
-          variantId: item.variantId,
-          productName: item.productName,
-          quantity: item.quantity,
-          orderId: order.id,
+        return tx.order.findUniqueOrThrow({
+          where: { id: order.id },
+          select: ORDER_RESPONSE_SELECT,
         });
-        await tx.product.update({
-          where: { id: item.productId },
-          data: { totalSold: { increment: item.quantity } },
-        });
-      }
-
-      return tx.order.findUniqueOrThrow({
-        where: { id: order.id },
-        select: ORDER_RESPONSE_SELECT,
-      });
-    }, { timeout: 15000 });
+      },
+      { timeout: 15000 },
+    );
   }
 
   // ---------------------------------------------------------------------

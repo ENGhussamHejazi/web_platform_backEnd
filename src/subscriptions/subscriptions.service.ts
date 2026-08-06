@@ -7,6 +7,11 @@ import { PrismaService } from '../prisma/prisma.service';
 import { Prisma, SubscriptionStatus } from '../../generated/prisma';
 import { computeSubscriptionEnd } from '../common/subscription.util';
 import {
+  NOOP,
+  TransactionalMailService,
+} from '../mail/transactional-mail.service';
+import { EmailEvent } from '../mail/email-events';
+import {
   AddSubscriptionNoteDto,
   CancelSubscriptionDto,
   ChangePackageDto,
@@ -57,9 +62,15 @@ const ALLOWED_TRANSITIONS: Record<string, SubscriptionStatus[]> = {
 
 @Injectable()
 export class SubscriptionsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly mail: TransactionalMailService,
+  ) {}
 
-  private assertTransition(action: keyof typeof ALLOWED_TRANSITIONS, current: SubscriptionStatus) {
+  private assertTransition(
+    action: keyof typeof ALLOWED_TRANSITIONS,
+    current: SubscriptionStatus,
+  ) {
     const allowed = ALLOWED_TRANSITIONS[action];
     if (!allowed.includes(current)) {
       throw new BadRequestException(
@@ -78,7 +89,11 @@ export class SubscriptionsService {
     status: SubscriptionStatus,
     daysLeft: number | null,
   ): { effectiveStatus: string; expiringSoon: boolean } {
-    if (status === 'SUSPENDED' || status === 'CANCELLED' || status === 'PENDING_PAYMENT') {
+    if (
+      status === 'SUSPENDED' ||
+      status === 'CANCELLED' ||
+      status === 'PENDING_PAYMENT'
+    ) {
       return { effectiveStatus: status, expiringSoon: false };
     }
     if (daysLeft !== null && daysLeft < 0) {
@@ -263,7 +278,12 @@ export class SubscriptionsService {
     return { items: paged, total, page: query.page, pageSize: query.pageSize };
   }
 
-  async summary(query: Omit<ListSubscriptionsQueryDto, 'sortBy' | 'sortDir' | 'page' | 'pageSize'>) {
+  async summary(
+    query: Omit<
+      ListSubscriptionsQueryDto,
+      'sortBy' | 'sortDir' | 'page' | 'pageSize'
+    >,
+  ) {
     const items = await this.fetchFiltered(query);
     const totalRevenue = items.reduce((sum, s) => sum + s.finalAmount, 0);
     const count = (status: string) =>
@@ -298,10 +318,18 @@ export class SubscriptionsService {
       select: { subscriptionId: true, type: true, createdAt: true },
     });
     const renewedCount = activities.filter((a) => a.type === 'RENEWED').length;
-    const cancelledCount = activities.filter((a) => a.type === 'CANCELLED').length;
-    const expiredCount = items.filter((s) => s.effectiveStatus === 'EXPIRED').length;
+    const cancelledCount = activities.filter(
+      (a) => a.type === 'CANCELLED',
+    ).length;
+    const expiredCount = items.filter(
+      (s) => s.effectiveStatus === 'EXPIRED',
+    ).length;
 
-    const trialTotal = items.filter((s) => s.status === 'TRIAL' || activities.some((a) => a.subscriptionId === s.id)).length;
+    const trialTotal = items.filter(
+      (s) =>
+        s.status === 'TRIAL' ||
+        activities.some((a) => a.subscriptionId === s.id),
+    ).length;
     const trialToPaid = activities.filter(
       (a) => a.type === 'PACKAGE_UPGRADED' || a.type === 'RENEWED',
     ).length;
@@ -311,9 +339,13 @@ export class SubscriptionsService {
         ? (trialToPaid / (trialCount + trialToPaid)) * 100
         : 0;
 
-    const renewalEligible = items.filter((s) => s.effectiveStatus !== 'CANCELLED').length;
-    const renewalRate = renewalEligible > 0 ? (renewedCount / renewalEligible) * 100 : 0;
-    const cancellationRate = items.length > 0 ? (cancelledCount / items.length) * 100 : 0;
+    const renewalEligible = items.filter(
+      (s) => s.effectiveStatus !== 'CANCELLED',
+    ).length;
+    const renewalRate =
+      renewalEligible > 0 ? (renewedCount / renewalEligible) * 100 : 0;
+    const cancellationRate =
+      items.length > 0 ? (cancelledCount / items.length) * 100 : 0;
 
     const revenue = items.reduce((sum, s) => sum + s.finalAmount, 0);
 
@@ -323,9 +355,11 @@ export class SubscriptionsService {
     const subsByBillingCycle: Record<string, number> = {};
     for (const s of items) {
       const planName = s.plan?.name ?? 'بدون باقة';
-      revenueByPackage[planName] = (revenueByPackage[planName] ?? 0) + s.finalAmount;
+      revenueByPackage[planName] =
+        (revenueByPackage[planName] ?? 0) + s.finalAmount;
       subsByPackage[planName] = (subsByPackage[planName] ?? 0) + 1;
-      subsByStatus[s.effectiveStatus] = (subsByStatus[s.effectiveStatus] ?? 0) + 1;
+      subsByStatus[s.effectiveStatus] =
+        (subsByStatus[s.effectiveStatus] ?? 0) + 1;
       const cycle = s.billingCycle ?? 'غير محدد';
       subsByBillingCycle[cycle] = (subsByBillingCycle[cycle] ?? 0) + 1;
     }
@@ -339,7 +373,9 @@ export class SubscriptionsService {
       day.setHours(0, 0, 0, 0);
       const nextDay = new Date(day);
       nextDay.setDate(nextDay.getDate() + 1);
-      const dayItems = items.filter((s) => s.createdAt >= day && s.createdAt < nextDay);
+      const dayItems = items.filter(
+        (s) => s.createdAt >= day && s.createdAt < nextDay,
+      );
       growthSeries.push({
         date: day.toISOString().slice(0, 10),
         count: dayItems.length,
@@ -438,9 +474,12 @@ export class SubscriptionsService {
     const sub = await this.findOrThrow(id);
     this.assertTransition('renew', sub.status);
 
-    return this.prisma.$transaction(async (tx) => {
-      const start = new Date();
-      const end = computeSubscriptionEnd(start, sub.store.billingCycle ?? 'MONTHLY');
+    const start = new Date();
+    const end = computeSubscriptionEnd(
+      start,
+      sub.store.billingCycle ?? 'MONTHLY',
+    );
+    const result = await this.prisma.$transaction(async (tx) => {
       await tx.store.update({
         where: { id: sub.storeId },
         data: { subscriptionStartAt: start, subscriptionEndAt: end },
@@ -465,6 +504,16 @@ export class SubscriptionsService {
       });
       return this.serialize(updated);
     });
+
+    this.mail
+      .sendSubscriptionEvent({
+        event: EmailEvent.SUBSCRIPTION_RENEWED,
+        storeId: sub.storeId,
+        idempotencySuffix: end.toISOString(),
+        amount: sub.finalAmount,
+      })
+      .catch(NOOP);
+    return result;
   }
 
   async extend(id: string, dto: ExtendSubscriptionDto, actorId: string | null) {
@@ -474,9 +523,13 @@ export class SubscriptionsService {
     const currentEnd = sub.store.subscriptionEndAt ?? new Date();
     const newEnd = dto.newEndAt
       ? new Date(dto.newEndAt)
-      : new Date(currentEnd.getTime() + dto.extendByDays! * 24 * 60 * 60 * 1000);
+      : new Date(
+          currentEnd.getTime() + dto.extendByDays! * 24 * 60 * 60 * 1000,
+        );
     if (newEnd <= currentEnd && dto.newEndAt) {
-      throw new BadRequestException('يجب أن يكون التاريخ الجديد بعد تاريخ الانتهاء الحالي');
+      throw new BadRequestException(
+        'يجب أن يكون التاريخ الجديد بعد تاريخ الانتهاء الحالي',
+      );
     }
 
     return this.prisma.$transaction(async (tx) => {
@@ -502,16 +555,24 @@ export class SubscriptionsService {
     });
   }
 
-  async changePackage(id: string, dto: ChangePackageDto, actorId: string | null) {
+  async changePackage(
+    id: string,
+    dto: ChangePackageDto,
+    actorId: string | null,
+  ) {
     const sub = await this.findOrThrow(id);
     this.assertTransition('changePackage', sub.status);
 
-    const plan = await this.prisma.plan.findUnique({ where: { id: dto.planId } });
+    const plan = await this.prisma.plan.findUnique({
+      where: { id: dto.planId },
+    });
     if (!plan) {
       throw new NotFoundException('الباقة غير موجودة');
     }
-    const billingCycle = dto.billingCycle ?? sub.store.billingCycle ?? 'MONTHLY';
-    const basePrice = billingCycle === 'YEARLY' ? plan.priceYearly : plan.priceMonthly;
+    const billingCycle =
+      dto.billingCycle ?? sub.store.billingCycle ?? 'MONTHLY';
+    const basePrice =
+      billingCycle === 'YEARLY' ? plan.priceYearly : plan.priceMonthly;
     const currentPrice = Number(sub.basePrice);
     const changeType =
       Number(basePrice) > currentPrice
@@ -522,7 +583,7 @@ export class SubscriptionsService {
     const start = new Date();
     const end = computeSubscriptionEnd(start, billingCycle);
 
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       await tx.store.update({
         where: { id: sub.storeId },
         data: {
@@ -555,7 +616,10 @@ export class SubscriptionsService {
       await this.logActivity(tx, {
         subscriptionId: id,
         storeId: sub.storeId,
-        type: changeType === 'DOWNGRADE' ? 'PACKAGE_DOWNGRADED' : 'PACKAGE_UPGRADED',
+        type:
+          changeType === 'DOWNGRADE'
+            ? 'PACKAGE_DOWNGRADED'
+            : 'PACKAGE_UPGRADED',
         actorId,
         title: changeType === 'DOWNGRADE' ? 'تخفيض الباقة' : 'ترقية الباقة',
         previousValue: sub.plan?.name,
@@ -563,18 +627,34 @@ export class SubscriptionsService {
       });
       return this.serialize(updated);
     });
+
+    this.mail
+      .sendSubscriptionEvent({
+        event: EmailEvent.SUBSCRIPTION_PLAN_CHANGED,
+        storeId: sub.storeId,
+        idempotencySuffix: `${plan.id}:${start.toISOString()}`,
+        amount: basePrice,
+        previousPlanName: sub.plan?.name,
+      })
+      .catch(NOOP);
+    return result;
   }
 
-  async suspend(id: string, dto: SuspendSubscriptionDto, actorId: string | null) {
+  async suspend(
+    id: string,
+    dto: SuspendSubscriptionDto,
+    actorId: string | null,
+  ) {
     const sub = await this.findOrThrow(id);
     this.assertTransition('suspend', sub.status);
 
-    return this.prisma.$transaction(async (tx) => {
+    const suspendedAt = new Date();
+    const result = await this.prisma.$transaction(async (tx) => {
       const updated = await tx.subscription.update({
         where: { id },
         data: {
           status: 'SUSPENDED',
-          suspendedAt: new Date(),
+          suspendedAt,
           suspendReason: dto.reason,
         },
         include: SUBSCRIPTION_INCLUDE,
@@ -591,6 +671,16 @@ export class SubscriptionsService {
       });
       return this.serialize(updated);
     });
+
+    this.mail
+      .sendSubscriptionEvent({
+        event: EmailEvent.SUBSCRIPTION_SUSPENDED,
+        storeId: sub.storeId,
+        idempotencySuffix: suspendedAt.toISOString(),
+        reason: dto.reason,
+      })
+      .catch(NOOP);
+    return result;
   }
 
   async reactivate(id: string, actorId: string | null) {
@@ -624,12 +714,13 @@ export class SubscriptionsService {
     const sub = await this.findOrThrow(id);
     this.assertTransition('cancel', sub.status);
 
-    return this.prisma.$transaction(async (tx) => {
+    const cancelledAt = new Date();
+    const result = await this.prisma.$transaction(async (tx) => {
       const updated = await tx.subscription.update({
         where: { id },
         data: {
           status: 'CANCELLED',
-          cancelledAt: new Date(),
+          cancelledAt,
           cancelReason: dto.reason,
         },
         include: SUBSCRIPTION_INCLUDE,
@@ -646,6 +737,16 @@ export class SubscriptionsService {
       });
       return this.serialize(updated);
     });
+
+    this.mail
+      .sendSubscriptionEvent({
+        event: EmailEvent.SUBSCRIPTION_CANCELLED,
+        storeId: sub.storeId,
+        idempotencySuffix: cancelledAt.toISOString(),
+        reason: dto.reason,
+      })
+      .catch(NOOP);
+    return result;
   }
 
   async updatePaymentStatus(
@@ -655,12 +756,13 @@ export class SubscriptionsService {
   ) {
     const sub = await this.findOrThrow(id);
 
-    return this.prisma.$transaction(async (tx) => {
+    const paidAt = new Date();
+    const result = await this.prisma.$transaction(async (tx) => {
       const updated = await tx.subscription.update({
         where: { id },
         data: {
           paymentStatus: dto.status,
-          ...(dto.status === 'PAID' ? { lastPaymentAt: new Date() } : {}),
+          ...(dto.status === 'PAID' ? { lastPaymentAt: paidAt } : {}),
         },
         include: SUBSCRIPTION_INCLUDE,
       });
@@ -673,7 +775,7 @@ export class SubscriptionsService {
             method: dto.method,
             reference: dto.reference,
             status: 'PAID',
-            paidAt: new Date(),
+            paidAt,
           },
         });
         await this.logActivity(tx, {
@@ -698,6 +800,20 @@ export class SubscriptionsService {
 
       return this.serialize(updated);
     });
+
+    // Only a confirmed payment is worth emailing about; the other payment
+    // states are internal bookkeeping the merchant can't act on.
+    if (dto.status === 'PAID') {
+      this.mail
+        .sendSubscriptionEvent({
+          event: EmailEvent.SUBSCRIPTION_PAYMENT_RECEIVED,
+          storeId: sub.storeId,
+          idempotencySuffix: paidAt.toISOString(),
+          amount: dto.amount ?? sub.finalAmount,
+        })
+        .catch(NOOP);
+    }
+    return result;
   }
 
   async addNote(id: string, dto: AddSubscriptionNoteDto, authorId: string) {

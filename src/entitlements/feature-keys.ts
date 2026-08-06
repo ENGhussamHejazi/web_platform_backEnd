@@ -19,6 +19,7 @@ export const FEATURE_KEYS = [
   'REPORTS_STOCK_MOVEMENTS',
   'REPORTS_TRANSACTIONS',
   'CUSTOMER_CHAT',
+  'CUSTOMER_EMAILS',
 ] as const;
 
 export type FeatureKey = (typeof FEATURE_KEYS)[number];

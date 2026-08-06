@@ -9,9 +9,12 @@ import { JwtService, JwtSignOptions } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import { createHash, randomBytes, randomUUID } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
-import { EmailQueueService } from '../mail/email-queue.service';
+import {
+  NOOP,
+  TransactionalMailService,
+} from '../mail/transactional-mail.service';
 import { Role } from '../../generated/prisma';
-import { computeSubscriptionEnd } from '../common/subscription.util';
+import { computeTrialEnd } from '../common/subscription.util';
 import {
   LoginDto,
   RegisterCustomerDto,
@@ -33,7 +36,7 @@ export class AuthService {
     private readonly prisma: PrismaService,
     private readonly jwt: JwtService,
     private readonly config: ConfigService,
-    private readonly emailQueue: EmailQueueService,
+    private readonly mail: TransactionalMailService,
   ) {}
 
   async forgotPassword(email: string, storeSlug?: string) {
@@ -57,11 +60,31 @@ export class AuthService {
             role: Role.CUSTOMER,
             customerOfStore: { slug: storeSlug, status: 'ACTIVE' },
           },
-          include: { customerOfStore: { select: { name: true } } },
+          include: {
+            customerOfStore: {
+              select: {
+                id: true,
+                name: true,
+                slug: true,
+                logoUrl: true,
+                primaryColor: true,
+              },
+            },
+          },
         })
       : await this.prisma.user.findFirst({
           where: { email: normalizedEmail, storeId: null },
-          include: { customerOfStore: { select: { name: true } } },
+          include: {
+            customerOfStore: {
+              select: {
+                id: true,
+                name: true,
+                slug: true,
+                logoUrl: true,
+                primaryColor: true,
+              },
+            },
+          },
         });
 
     // Keep the response identical to prevent discovering registered emails.
@@ -84,17 +107,18 @@ export class AuthService {
       ? `/store/${encodeURIComponent(storeSlug)}/reset-password`
       : '/reset-password';
     const resetUrl = `${frontendBaseUrl}${resetPath}?token=${encodeURIComponent(token)}`;
-    const storeName = user.customerOfStore?.name ?? 'سوق سوريا';
 
-    await this.emailQueue.enqueue({
-      idempotencyKey: `password-reset:${user.id}:${tokenHash}`,
-      type: 'PASSWORD_RESET',
-      recipientUserId: user.id,
-      recipientEmail: user.email,
-      subject: `استعادة كلمة المرور — ${storeName}`,
-      text: `طلبت استعادة كلمة المرور. افتح الرابط التالي خلال 30 دقيقة:\n${resetUrl}\n\nإذا لم تطلب ذلك، تجاهل هذه الرسالة.`,
-      html: `<div dir="rtl" style="font-family:Arial,sans-serif;line-height:1.8"><h2>استعادة كلمة المرور</h2><p>طلبت استعادة كلمة المرور لحسابك في ${this.escapeHtml(storeName)}.</p><p><a href="${this.escapeHtml(resetUrl)}">تعيين كلمة مرور جديدة</a></p><p>صلاحية الرابط 30 دقيقة ويُستخدم مرة واحدة فقط.</p><p>إذا لم تطلب ذلك، تجاهل هذه الرسالة.</p></div>`,
-    });
+    // Storefront customers get their own store's branding on the email; a
+    // platform account (merchant/admin) gets the TRENDWA brand.
+    this.mail
+      .sendPasswordReset({
+        userId: user.id,
+        email: user.email,
+        resetUrl,
+        tokenHash,
+        store: user.customerOfStore ?? null,
+      })
+      .catch(NOOP);
     return response;
   }
 
@@ -144,6 +168,8 @@ export class AuthService {
         name: true,
         status: true,
         statusNote: true,
+        logoUrl: true,
+        primaryColor: true,
       },
     });
     if (!store) {
@@ -167,6 +193,16 @@ export class AuthService {
         storeId,
       },
     });
+
+    this.mail
+      .sendCustomerWelcome({
+        userId: user.id,
+        email: user.email,
+        customerName: user.name,
+        store,
+      })
+      .catch(NOOP);
+
     return this.buildAuthResponse(user, store);
   }
 
@@ -200,6 +236,11 @@ export class AuthService {
         },
       });
       const subscriptionStartAt = new Date();
+      // The first period is a free trial month, so the store's current period
+      // ends when the trial does — not after a full billing cycle. The paid
+      // window (monthly or yearly) only starts once the subscription is
+      // renewed after the trial.
+      const trialEndsAt = computeTrialEnd(subscriptionStartAt);
       const store = await tx.store.create({
         data: {
           ownerId: created.id,
@@ -210,10 +251,7 @@ export class AuthService {
           billingCycle: dto.billingCycle,
           businessCategories: dto.businessCategories,
           subscriptionStartAt,
-          subscriptionEndAt: computeSubscriptionEnd(
-            subscriptionStartAt,
-            dto.billingCycle,
-          ),
+          subscriptionEndAt: trialEndsAt,
         },
       });
       await tx.homepageSection.createMany({
@@ -255,12 +293,15 @@ export class AuthService {
         data: {
           storeId: store.id,
           planId: plan.id,
-          status: 'ACTIVE',
+          status: 'TRIAL',
           paymentStatus: 'UNPAID',
           renewalType: 'MANUAL',
+          // basePrice/finalAmount hold the contracted price that falls due
+          // once the trial ends — nothing is owed during the trial itself.
           basePrice,
           finalAmount: basePrice,
-          nextRenewalAt: store.subscriptionEndAt,
+          trialEndsAt,
+          nextRenewalAt: trialEndsAt,
         },
       });
       await tx.subscriptionPackageChange.create({
@@ -275,13 +316,38 @@ export class AuthService {
           subscriptionId: subscription.id,
           storeId: store.id,
           type: 'CREATED',
-          title: 'تسجيل اشتراك جديد عند إنشاء المتجر',
+          title: 'بدء تجربة مجانية لمدة شهر عند إنشاء المتجر',
           newValue: plan.name,
         },
       });
 
       return { user: created, store };
     });
+
+    // After the transaction commits — a mail failure must never roll back a
+    // successful registration.
+    this.mail
+      .sendMerchantWelcome({
+        userId: user.id,
+        email: user.email,
+        merchantName: user.name,
+        storeId: store.id,
+        storeName: store.name,
+        planName: plan.name,
+        billingCycle: dto.billingCycle,
+        trialEndsAt: store.subscriptionEndAt,
+      })
+      .catch(NOOP);
+    this.mail
+      .sendAdminNewMerchant({
+        storeId: store.id,
+        storeName: store.name,
+        merchantName: user.name,
+        merchantEmail: user.email,
+        merchantPhone: user.phone ?? '—',
+        planName: plan.name,
+      })
+      .catch(NOOP);
 
     return this.buildAuthResponse(user, store);
   }
@@ -341,6 +407,39 @@ export class AuthService {
       data: { revoked: true },
     });
     return { success: true };
+  }
+
+  // The JWT payload only carries the store's id/status, but a merchant sitting
+  // on the locked dashboard polls this to notice the moment an admin flips the
+  // store to ACTIVE — so it returns the same rich user shape as login, letting
+  // the client swap in the fresh store without forcing a re-login.
+  async me(userId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, email: true, role: true, storeId: true },
+    });
+    if (!user) {
+      throw new UnauthorizedException('المستخدم غير موجود');
+    }
+    const store = await this.prisma.store.findFirst({
+      where:
+        user.role === Role.CUSTOMER
+          ? { id: user.storeId ?? '' }
+          : { ownerId: user.id },
+      select: {
+        id: true,
+        slug: true,
+        name: true,
+        status: true,
+        statusNote: true,
+      },
+    });
+    return {
+      id: user.id,
+      email: user.email,
+      role: user.role,
+      store: store ?? null,
+    };
   }
 
   async heartbeat(userId: string) {
@@ -432,11 +531,5 @@ export class AuthService {
 
   private hashToken(token: string) {
     return createHash('sha256').update(token).digest('hex');
-  }
-
-  private escapeHtml(value: string) {
-    return value.replace(/[&<>"']/gu, (char) => ({
-      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;',
-    })[char]!);
   }
 }

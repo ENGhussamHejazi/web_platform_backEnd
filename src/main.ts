@@ -70,6 +70,6 @@ async function bootstrap() {
   const port = config.get<number>('port') ?? 3000;
   await app.listen(port);
 
-  console.log(`سوق سوريا API يعمل على المنفذ ${port}`);
+  console.log(`TRENDWA API يعمل على المنفذ ${port}`);
 }
 bootstrap();

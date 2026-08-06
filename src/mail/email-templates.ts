@@ -1,3 +1,14 @@
+import { EmailBrand, RenderedEmail, renderEmail } from './templates/layout';
+
+/**
+ * Store-application lifecycle emails.
+ *
+ * These predate the shared layout and originally carried their own inline
+ * HTML; they now render through `templates/layout` like every other email, so
+ * a merchant's application mails and their order/subscription mails look like
+ * one system. The exported signatures are unchanged.
+ */
+
 export interface ReceiptEmailData {
   merchantName: string;
   storeName: string;
@@ -5,83 +16,48 @@ export interface ReceiptEmailData {
   statusPageUrl: string;
 }
 
-function wrapHtml(bodyHtml: string, buttonLabel: string, buttonUrl: string) {
-  return `<!doctype html>
-<html>
-  <body style="margin:0;padding:0;background:#f1f5f9;font-family:Tahoma,Arial,sans-serif;">
-    <table role="presentation" width="100%" style="padding:24px 0;">
-      <tr>
-        <td align="center">
-          <table role="presentation" width="100%" style="max-width:480px;background:#ffffff;border-radius:12px;overflow:hidden;">
-            <tr><td style="background:#0EA5A4;padding:20px;text-align:center;color:#fff;font-size:18px;font-weight:bold;">سوق سوريا</td></tr>
-            <tr><td style="padding:24px;color:#1e293b;font-size:14px;line-height:1.9;">${bodyHtml}</td></tr>
-            <tr>
-              <td style="padding:0 24px 28px;text-align:center;">
-                <a href="${buttonUrl}" style="display:inline-block;background:#0EA5A4;color:#fff;text-decoration:none;padding:12px 28px;border-radius:8px;font-weight:bold;">${buttonLabel}</a>
-              </td>
-            </tr>
-          </table>
-        </td>
-      </tr>
-    </table>
-  </body>
-</html>`;
+const PLATFORM_BRAND: EmailBrand = { name: 'TRENDWA', color: '#0EA5A4' };
+
+export function receiptEmailAr(data: ReceiptEmailData): RenderedEmail {
+  return renderEmail(PLATFORM_BRAND, 'تم استلام طلب فتح متجرك بنجاح', {
+    preheader: `طلب فتح متجر "${data.storeName}" قيد المراجعة`,
+    title: 'تم استلام طلبك بنجاح',
+    badge: { label: 'بانتظار المراجعة', tone: 'info' },
+    paragraphs: [
+      `مرحباً ${data.merchantName}، تم استلام طلب فتح متجرك "${data.storeName}" بنجاح.`,
+      'طلبك الآن بانتظار المراجعة من فريق الإدارة. سنرسل لك إشعاراً جديداً عند بدء المراجعة، أو عند طلب تعديلات، أو عند اتخاذ القرار النهائي.',
+      'يمكنك تسجيل الدخول إلى حسابك لمتابعة حالة الطلب واستيفاء أي معلومات مطلوبة.',
+    ],
+    rows: [
+      { label: 'رقم الطلب', value: data.applicationReference },
+      { label: 'اسم المتجر', value: data.storeName },
+      { label: 'الحالة الحالية', value: 'تم الإرسال — بانتظار المراجعة' },
+    ],
+    button: { label: 'متابعة حالة الطلب', url: data.statusPageUrl },
+  });
 }
 
-export function receiptEmailAr(data: ReceiptEmailData) {
-  const subject = 'تم استلام طلب فتح متجرك بنجاح';
-  const text = `مرحباً ${data.merchantName}،
-
-تم استلام طلب فتح متجرك "${data.storeName}" بنجاح.
-
-رقم الطلب: ${data.applicationReference}
-
-طلبك الآن بانتظار المراجعة من فريق الإدارة. سنرسل لك إشعاراً جديداً عند بدء المراجعة أو عند طلب تعديلات أو عند اتخاذ القرار النهائي.
-
-يمكنك تسجيل الدخول إلى حسابك لمتابعة حالة الطلب واستيفاء أي معلومات مطلوبة.
-
-الحالة الحالية: تم الإرسال — بانتظار المراجعة
-
-مع التحية،
-فريق المنصة`;
-  const html = wrapHtml(
-    `مرحباً <b>${data.merchantName}</b>،<br/><br/>
-    تم استلام طلب فتح متجرك "<b>${data.storeName}</b>" بنجاح.<br/><br/>
-    رقم الطلب: <b>${data.applicationReference}</b><br/><br/>
-    طلبك الآن بانتظار المراجعة من فريق الإدارة. سنرسل لك إشعاراً جديداً عند بدء المراجعة أو عند طلب تعديلات أو عند اتخاذ القرار النهائي.<br/><br/>
-    الحالة الحالية: <b>تم الإرسال — بانتظار المراجعة</b>`,
-    'متابعة حالة الطلب',
-    data.statusPageUrl,
+export function receiptEmailEn(data: ReceiptEmailData): RenderedEmail {
+  return renderEmail(
+    PLATFORM_BRAND,
+    'Your store application has been received',
+    {
+      preheader: `Application for "${data.storeName}" is under review`,
+      title: 'We received your application',
+      badge: { label: 'Awaiting review', tone: 'info' },
+      paragraphs: [
+        `Hello ${data.merchantName}, we have successfully received your application to open "${data.storeName}".`,
+        'Your application is now waiting for review by the administration team. We will notify you when the review begins, when changes are requested, or when a final decision is made.',
+        'You can sign in to your account to track the application status and complete any requested information.',
+      ],
+      rows: [
+        { label: 'Application reference', value: data.applicationReference },
+        { label: 'Store name', value: data.storeName },
+        { label: 'Current status', value: 'Submitted — Awaiting Review' },
+      ],
+      button: { label: 'Track Application Status', url: data.statusPageUrl },
+    },
   );
-  return { subject, text, html };
-}
-
-export function receiptEmailEn(data: ReceiptEmailData) {
-  const subject = 'Your store application has been received';
-  const text = `Hello ${data.merchantName},
-
-We have successfully received your application to open "${data.storeName}".
-
-Application reference: ${data.applicationReference}
-
-Your application is now waiting for review by the administration team. We will send you another notification when the review begins, when changes are requested, or when a final decision is made.
-
-You can sign in to your account to track the application status and complete any requested information.
-
-Current status: Submitted — Awaiting Review
-
-Regards,
-Platform Team`;
-  const html = wrapHtml(
-    `Hello <b>${data.merchantName}</b>,<br/><br/>
-    We have successfully received your application to open "<b>${data.storeName}</b>".<br/><br/>
-    Application reference: <b>${data.applicationReference}</b><br/><br/>
-    Your application is now waiting for review by the administration team. We will send you another notification when the review begins, when changes are requested, or when a final decision is made.<br/><br/>
-    Current status: <b>Submitted — Awaiting Review</b>`,
-    'Track Application Status',
-    data.statusPageUrl,
-  );
-  return { subject, text, html };
 }
 
 const STATUS_MESSAGES_AR: Record<string, string> = {
@@ -104,29 +80,74 @@ const STATUS_MESSAGES_EN: Record<string, string> = {
     'Your store application has been suspended by the platform administration.',
 };
 
+const STATUS_LABELS_AR: Record<string, string> = {
+  UNDER_REVIEW: 'قيد المراجعة',
+  CHANGES_REQUESTED: 'مطلوب تعديلات',
+  APPROVED: 'تمت الموافقة',
+  REJECTED: 'مرفوض',
+  SUSPENDED: 'موقوف',
+};
+
+const STATUS_LABELS_EN: Record<string, string> = {
+  UNDER_REVIEW: 'Under review',
+  CHANGES_REQUESTED: 'Changes requested',
+  APPROVED: 'Approved',
+  REJECTED: 'Rejected',
+  SUSPENDED: 'Suspended',
+};
+
+const STATUS_TONES: Record<string, 'info' | 'success' | 'warning' | 'danger'> =
+  {
+    UNDER_REVIEW: 'info',
+    CHANGES_REQUESTED: 'warning',
+    APPROVED: 'success',
+    REJECTED: 'danger',
+    SUSPENDED: 'danger',
+  };
+
 export function statusChangeEmail(
   lang: 'ar' | 'en',
   status: string,
   data: ReceiptEmailData,
-) {
+): RenderedEmail {
   const isAr = lang === 'ar';
   const message = isAr
     ? (STATUS_MESSAGES_AR[status] ?? 'تم تحديث حالة طلب متجرك.')
     : (STATUS_MESSAGES_EN[status] ??
       'Your store application status was updated.');
-  const subject = isAr
-    ? `تحديث حالة طلب متجرك: ${data.storeName}`
-    : `Update on your store application: ${data.storeName}`;
-  const buttonLabel = isAr ? 'متابعة حالة الطلب' : 'Track Application Status';
-  const text = `${isAr ? 'مرحباً' : 'Hello'} ${data.merchantName},\n\n${message}\n\n${
-    isAr ? 'رقم الطلب' : 'Application reference'
-  }: ${data.applicationReference}\n\n${data.statusPageUrl}`;
-  const html = wrapHtml(
-    `${isAr ? 'مرحباً' : 'Hello'} <b>${data.merchantName}</b>،<br/><br/>${message}<br/><br/>${
-      isAr ? 'رقم الطلب' : 'Application reference'
-    }: <b>${data.applicationReference}</b>`,
-    buttonLabel,
-    data.statusPageUrl,
+  const label = isAr
+    ? (STATUS_LABELS_AR[status] ?? status)
+    : (STATUS_LABELS_EN[status] ?? status);
+
+  return renderEmail(
+    PLATFORM_BRAND,
+    isAr
+      ? `تحديث حالة طلب متجرك: ${data.storeName}`
+      : `Update on your store application: ${data.storeName}`,
+    {
+      preheader: isAr ? `الحالة الجديدة: ${label}` : `New status: ${label}`,
+      title: isAr ? 'تحديث على طلب متجرك' : 'Your application was updated',
+      badge: { label, tone: STATUS_TONES[status] ?? 'info' },
+      paragraphs: [
+        isAr ? `مرحباً ${data.merchantName},` : `Hello ${data.merchantName},`,
+        message,
+      ],
+      rows: [
+        {
+          label: isAr ? 'رقم الطلب' : 'Application reference',
+          value: data.applicationReference,
+        },
+        { label: isAr ? 'اسم المتجر' : 'Store name', value: data.storeName },
+        {
+          label: isAr ? 'الحالة الحالية' : 'Current status',
+          value: label,
+          emphasis: true,
+        },
+      ],
+      button: {
+        label: isAr ? 'متابعة حالة الطلب' : 'Track Application Status',
+        url: data.statusPageUrl,
+      },
+    },
   );
-  return { subject, text, html };
 }

@@ -1,7 +1,7 @@
 {
   "name": "souq-syria-backend",
   "version": "0.1.0",
-  "description": "Souq Syria — multi-tenant e-commerce API (NestJS + Prisma)",
+  "description": "TRENDWA — multi-tenant e-commerce API (NestJS + Prisma)",
   "author": "",
   "private": true,
   "license": "UNLICENSED",

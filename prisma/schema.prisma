@@ -1,4 +1,4 @@
-// Souq Syria (سوق سوريا) — Multi-tenant e-commerce platform
+// TRENDWA — Multi-tenant e-commerce platform
 // Row-level multi-tenancy: every store-scoped table carries storeId.
 
 generator client {
@@ -680,15 +680,19 @@ model SystemErrorLog {
   @@map("system_error_logs")
 }
 
-/// Tracks queued/sent application-related emails for idempotency and delivery
+/// Tracks every queued/sent transactional email for idempotency and delivery
 /// visibility. Never stores SMTP credentials or full provider payloads.
+/// recipientUserId is nullable because guest checkout emails have no account
+/// behind them — only the address the buyer typed at checkout.
 model EmailLog {
   id                String              @id @default(uuid())
   idempotencyKey    String              @unique
   type              String
   applicationId     String?
   submissionVersion Int?
-  recipientUserId   String
+  storeId           String?
+  orderId           String?
+  recipientUserId   String?
   recipientEmail    String
   subject           String
   status            EmailDeliveryStatus @default(QUEUED)
@@ -701,6 +705,9 @@ model EmailLog {
   application StoreApplication? @relation(fields: [applicationId], references: [id])
 
   @@index([applicationId])
+  @@index([storeId])
+  @@index([orderId])
+  @@index([type])
   @@map("email_logs")
 }
 

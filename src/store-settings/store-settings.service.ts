@@ -56,6 +56,12 @@ const STORE_SETTINGS_SELECT = {
       maxImagesPerProduct: true,
     },
   },
+  // Read-only for the merchant, but they need to know they're on the free
+  // trial and when it ends — the dates alone can't distinguish a trial from
+  // a paid period.
+  subscription: {
+    select: { status: true, trialEndsAt: true },
+  },
 };
 
 @Injectable()

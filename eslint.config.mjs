@@ -32,4 +32,18 @@ export default tseslint.config(
       "prettier/prettier": ["error", { endOfLine: "auto" }],
     },
   },
+  {
+    // Specs mock Prisma and services with partial `any`-shaped objects, and
+    // Jest's own idioms (`expect(obj.method)`, `mock.calls[0][0]`) trip the
+    // type-checked rules by design — typescript-eslint recommends turning
+    // `unbound-method` off for Jest rather than working around it.
+    files: ['**/*.spec.ts', '**/*.e2e-spec.ts', 'src/**/testing/**/*.ts'],
+    rules: {
+      '@typescript-eslint/unbound-method': 'off',
+      '@typescript-eslint/no-unsafe-assignment': 'off',
+      '@typescript-eslint/no-unsafe-member-access': 'off',
+      '@typescript-eslint/no-unsafe-call': 'off',
+      '@typescript-eslint/no-unsafe-return': 'off',
+    },
+  },
 );
