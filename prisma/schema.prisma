@@ -753,7 +753,10 @@ model Subscription {
   discount    Decimal @default(0) @db.Decimal(10, 2)
   tax         Decimal @default(0) @db.Decimal(10, 2)
   finalAmount Decimal @default(0) @db.Decimal(10, 2)
-  currency    String  @default("SYP")
+  /// Platform billing is USD-denominated (Plan.priceMonthly/priceYearly are
+  /// dollars). Distinct from Store.currency, which is what the merchant sells
+  /// in on their own storefront and stays merchant-controlled.
+  currency    String  @default("USD")
 
   trialEndsAt   DateTime?
   lastPaymentAt DateTime?
@@ -805,7 +808,8 @@ model SubscriptionInvoice {
   discount       Decimal  @default(0) @db.Decimal(10, 2)
   tax            Decimal  @default(0) @db.Decimal(10, 2)
   finalAmount    Decimal  @db.Decimal(10, 2)
-  currency       String   @default("SYP")
+  /// USD — see Subscription.currency.
+  currency       String   @default("USD")
   periodStart    DateTime
   periodEnd      DateTime
   issuedAt       DateTime @default(now())

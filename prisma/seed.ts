@@ -4,30 +4,59 @@ import { seedCities } from './seeds/cities.seed';
 
 const prisma = new PrismaClient();
 
+// Plan prices are in **USD** (see frontend/src/lib/planPricing.ts) — platform
+// billing is dollar-denominated regardless of the currency a merchant sells in
+// on their own storefront (`Store.currency`, which stays merchant-controlled).
+//
+// The ladder is value-derived rather than arbitrary: every tier includes the
+// same core platform (storefront, orders, COD checkout, shipping zones,
+// customer accounts, returns/refunds, invoices) and is then priced on what it
+// actually unlocks in code — catalog capacity, images per product, the theme
+// gates in store-theme.service.ts, the report gates in
+// merchant-reports.controller.ts, CUSTOMER_CHAT and CUSTOMER_EMAILS.
+//
+// `features` is display-only marketing copy; `featureKeys` is what the
+// entitlements service actually enforces. Keep the two saying the same thing —
+// a bullet with no matching gate is a promise the product doesn't keep.
 const PLANS = [
   {
     key: 'basic',
     name: 'أساسي',
-    description: 'لبدء متجرك الأول والتعرف على المنصة',
-    priceMonthly: 50000,
-    priceYearly: 500000,
+    description: 'لإطلاق متجرك الأول والبيع من اليوم الأول',
+    priceMonthly: 12,
+    priceYearly: 120,
     maxProducts: 50,
-    features: ['حتى 50 منتج', 'لوحة تحكم كاملة', 'دعم عبر البريد الإلكتروني'],
-    featureKeys: ['BASIC_TEMPLATES', 'THEME_DRAFTS', 'CUSTOM_COLORS'],
+    maxImagesPerProduct: 3,
+    features: [
+      'حتى 50 منتج، و3 صور لكل منتج',
+      'متجر إلكتروني كامل مع الدفع عند الاستلام',
+      'إدارة الطلبات والشحن حسب المحافظة',
+      'حسابات عملاء وتقييمات ومراجعات',
+      'قالب أساسي مع إمكانية تغيير ألوان المتجر',
+      'تقارير المبيعات وأداء المنتجات',
+      'دعم عبر البريد الإلكتروني',
+    ],
+    featureKeys: ['BASIC_TEMPLATES', 'CUSTOM_COLORS'],
     order: 1,
   },
   {
     key: 'pro',
     name: 'احترافي',
-    description: 'للمتاجر النشطة اللي بتحتاج مساحة أكبر ودعم أسرع',
-    priceMonthly: 120000,
-    priceYearly: 1200000,
+    description: 'للمتاجر النامية التي تحتاج تصميماً أوسع وتحليلات وتواصلاً مباشراً مع العملاء',
+    priceMonthly: 30,
+    priceYearly: 300,
     maxProducts: 500,
+    maxImagesPerProduct: 6,
     features: [
-      'حتى 500 منتج',
-      'لوحة تحكم كاملة',
+      'كل ميزات الباقة الأساسية',
+      'حتى 500 منتج، و6 صور لكل منتج',
+      'قوالب متقدمة (عصري وكلاسيكي)',
+      'تخصيص الخطوط والأزرار وبطاقات المنتج والهيدر',
+      'حفظ مسودات التصميم قبل نشرها',
+      'دردشة مباشرة مع عملاء متجرك',
+      'رسائل بريد للعملاء بهوية متجرك',
+      'تحليلات المخزون وسجل حركة المخزون',
       'دعم ذو أولوية',
-      'تقارير مبيعات متقدمة',
     ],
     featureKeys: [
       'BASIC_TEMPLATES',
@@ -40,6 +69,7 @@ const PLANS = [
       'CUSTOM_HEADER',
       'REPORTS_INVENTORY_ANALYTICS',
       'REPORTS_STOCK_MOVEMENTS',
+      'CUSTOMER_CHAT',
       'CUSTOMER_EMAILS',
     ],
     order: 2,
@@ -47,15 +77,18 @@ const PLANS = [
   {
     key: 'business',
     name: 'أعمال',
-    description: 'للمتاجر الكبيرة بدون حدود على عدد المنتجات',
-    priceMonthly: 250000,
-    priceYearly: 2500000,
+    description: 'للمتاجر الكبيرة: بلا حدود على الكتالوج، تخصيص كامل، وسجل مالي شامل',
+    priceMonthly: 42,
+    priceYearly: 420,
     maxProducts: null,
+    maxImagesPerProduct: 8,
     features: [
-      'منتجات غير محدودة',
-      'لوحة تحكم كاملة',
+      'كل ميزات الباقة الاحترافية',
+      'منتجات غير محدودة، و8 صور لكل منتج',
+      'تخصيص كامل للتصميم: الفوتر والتخطيط والسلايدر',
+      'فتح كل خيارات تخصيص المظهر دفعة واحدة',
+      'سجل المعاملات المالية الكامل',
       'مدير حساب مخصص',
-      'تقارير مبيعات متقدمة',
     ],
     featureKeys: [
       'BASIC_TEMPLATES',
@@ -73,6 +106,7 @@ const PLANS = [
       'REPORTS_INVENTORY_ANALYTICS',
       'REPORTS_STOCK_MOVEMENTS',
       'REPORTS_TRANSACTIONS',
+      'CUSTOMER_CHAT',
       'CUSTOMER_EMAILS',
     ],
     order: 3,
