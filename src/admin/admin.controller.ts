@@ -18,20 +18,26 @@ import type { AuthUser } from '../common/decorators/current-user.decorator';
 import { Role } from '../../generated/prisma';
 import { ZodValidationPipe } from '../common/pipes/zod-validation.pipe';
 import {
+  adminSearchQuerySchema,
   createPlanSchema,
+  dashboardQuerySchema,
   listAdminCustomersQuerySchema,
   listStoresQuerySchema,
   updatePlanSchema,
   updateStorePlanSchema,
   updateStoreStatusSchema,
+  updateStoreVerifiedSchema,
 } from './dto/admin.schemas';
 import type {
+  AdminSearchQueryDto,
   CreatePlanDto,
+  DashboardQueryDto,
   ListAdminCustomersQueryDto,
   ListStoresQueryDto,
   UpdatePlanDto,
   UpdateStorePlanDto,
   UpdateStoreStatusDto,
+  UpdateStoreVerifiedDto,
 } from './dto/admin.schemas';
 import { sendMessageSchema } from '../messaging/dto/messaging.schemas';
 import type { SendMessageDto } from '../messaging/dto/messaging.schemas';
@@ -47,6 +53,22 @@ export class AdminController {
   @Get('analytics')
   analytics() {
     return this.adminService.analytics();
+  }
+
+  @Get('dashboard')
+  dashboard(
+    @Query(new ZodValidationPipe(dashboardQuerySchema))
+    query: DashboardQueryDto,
+  ) {
+    return this.adminService.dashboard(query);
+  }
+
+  @Get('search')
+  search(
+    @Query(new ZodValidationPipe(adminSearchQuerySchema))
+    query: AdminSearchQueryDto,
+  ) {
+    return this.adminService.search(query);
   }
 
   @Get('reports')
@@ -103,6 +125,15 @@ export class AdminController {
   @Get('messages/summary')
   messageSummary() {
     return this.adminService.messageSummary();
+  }
+
+  @Patch('stores/:id/verified')
+  updateStoreVerified(
+    @Param('id') id: string,
+    @Body(new ZodValidationPipe(updateStoreVerifiedSchema))
+    dto: UpdateStoreVerifiedDto,
+  ) {
+    return this.adminService.updateVerified(id, dto);
   }
 
   @Patch('stores/:id/plan')

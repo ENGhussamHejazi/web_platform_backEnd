@@ -36,7 +36,7 @@ const EDITABLE_STATUSES: ApplicationStatus[] = ['DRAFT', 'CHANGES_REQUESTED'];
  * Mirrored in the frontend wizard (applicationValidation.ts) — keep in sync.
  */
 const REQUIRED_DOCUMENT_TYPES: Record<string, string[]> = {
-  PHYSICAL_STORE_OWNER: ['identity', 'commercial_registration'],
+  PHYSICAL_STORE_OWNER: ['identity'],
   ONLINE_SELLER: ['identity'],
 };
 
@@ -122,6 +122,7 @@ export class StoreApplicationsService {
     const withPercentage = await this.prisma.storeApplication.update({
       where: { id: updated.id },
       data: { completionPercentage: this.computeCompletion(updated) },
+      include: { documents: true },
     });
 
     return this.serialize(withPercentage);

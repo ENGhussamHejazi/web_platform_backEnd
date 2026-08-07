@@ -18,6 +18,7 @@ import { StoreApplicationsModule } from './store-applications/store-applications
 import { NotificationsModule } from './notifications/notifications.module';
 import { MailModule } from './mail/mail.module';
 import { StorefrontModule } from './storefront/storefront.module';
+import { MarketplaceModule } from './marketplace/marketplace.module';
 import { StoreSettingsModule } from './store-settings/store-settings.module';
 import { StoreThemeModule } from './store-theme/store-theme.module';
 import { CustomerAccountModule } from './customer-account/customer-account.module';
@@ -58,6 +59,7 @@ import { MonitoringModule } from './monitoring/monitoring.module';
     MessagingModule,
     StoreApplicationsModule,
     StorefrontModule,
+    MarketplaceModule,
     StoreSettingsModule,
     StoreThemeModule,
     CustomerAccountModule,

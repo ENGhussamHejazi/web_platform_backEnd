@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { STORE_BUSINESS_CATEGORIES } from '../../entitlements/business-categories';
+import { Governorate } from '../../../generated/prisma';
 
 const socialLinksSchema = z.object({
   instagram: z.string().url().optional().or(z.literal('')),
@@ -63,6 +64,7 @@ export const updateStoreSettingsSchema = z.object({
   loyaltyDiscountPercentage: z.number().int().min(1).max(90).optional(),
   maintenanceMessage: z.string().trim().max(500).optional().nullable(),
   openingAt: z.string().datetime().optional().nullable(),
+  governorate: z.nativeEnum(Governorate).optional().nullable(),
 });
 export type UpdateStoreSettingsDto = z.infer<typeof updateStoreSettingsSchema>;
 

@@ -338,6 +338,12 @@ model Store {
   description         String?
   logoUrl             String?
   primaryColor        String        @default("#0EA5E9")
+  // Merchant-set base of operations, shown as a marketplace filter. Distinct
+  // from City (shipping-zone granularity) — this is store-level, one value.
+  governorate         Governorate?
+  // Admin-only trust badge (manual review), surfaced as a marketplace filter
+  // and card badge. Not tied to store status/approval.
+  verified            Boolean       @default(false)
   status              StoreStatus   @default(PENDING)
   statusNote          String?
   planId              String?

@@ -266,9 +266,16 @@ export class AuthService {
           },
           {
             storeId: store.id,
+            type: 'FEATURED_CATEGORIES',
+            title: 'تسوق حسب الفئة',
+            config: { limit: 6 },
+            sortOrder: 1,
+          },
+          {
+            storeId: store.id,
             type: 'ALL_CATEGORY_PRODUCTS',
             config: { limit: 4 },
-            sortOrder: 1,
+            sortOrder: 2,
           },
         ],
       });

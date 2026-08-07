@@ -15,6 +15,11 @@ export const updateStoreStatusSchema = z.object({
 });
 export type UpdateStoreStatusDto = z.infer<typeof updateStoreStatusSchema>;
 
+export const updateStoreVerifiedSchema = z.object({
+  verified: z.boolean(),
+});
+export type UpdateStoreVerifiedDto = z.infer<typeof updateStoreVerifiedSchema>;
+
 export const updateStorePlanSchema = z.object({
   planId: z.string().uuid('معرّف الباقة غير صالح'),
   billingCycle: z.enum(['MONTHLY', 'YEARLY']).optional(),
@@ -57,6 +62,26 @@ export const updatePlanSchema = z.object({
   order: z.number().int().optional(),
 });
 export type UpdatePlanDto = z.infer<typeof updatePlanSchema>;
+
+/** Rolling window for the super-admin dashboard KPIs, compared against the
+ *  immediately preceding window of the same length. */
+export const dashboardQuerySchema = z.object({
+  days: z.coerce
+    .number()
+    .int()
+    .refine((n) => [7, 30, 90].includes(n), {
+      message: 'المدة المسموحة: 7 أو 30 أو 90 يوماً',
+    })
+    .default(30),
+});
+export type DashboardQueryDto = z.infer<typeof dashboardQuerySchema>;
+
+/** Cross-entity lookup backing the admin command palette (Ctrl/Cmd + K). */
+export const adminSearchQuerySchema = z.object({
+  q: z.string().trim().min(2, 'أدخل حرفين على الأقل').max(120),
+  limit: z.coerce.number().int().min(1).max(10).default(5),
+});
+export type AdminSearchQueryDto = z.infer<typeof adminSearchQuerySchema>;
 
 export const listAdminCustomersQuerySchema = z.object({
   search: z.string().trim().max(120).optional(),

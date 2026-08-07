@@ -42,6 +42,8 @@ const STORE_SETTINGS_SELECT = {
   loyaltyDiscountPercentage: true,
   maintenanceMessage: true,
   openingAt: true,
+  governorate: true,
+  verified: true,
   billingCycle: true,
   subscriptionStartAt: true,
   subscriptionEndAt: true,
