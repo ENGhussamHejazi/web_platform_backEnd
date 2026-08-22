@@ -396,7 +396,14 @@ export class ProductsService {
           where: { productId: id },
           select: { publicId: true },
         });
-        removedPublicIds.push(...oldImages.map((img) => img.publicId));
+        const keptPublicIds = new Set(
+          dto.images.map((img) => img.publicId).filter((id): id is string => !!id),
+        );
+        removedPublicIds.push(
+          ...oldImages
+            .map((img) => img.publicId)
+            .filter((publicId) => !publicId || !keptPublicIds.has(publicId)),
+        );
         await tx.productImage.deleteMany({ where: { productId: id } });
         if (dto.images.length) {
           await tx.productImage.createMany({
