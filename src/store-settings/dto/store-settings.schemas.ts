@@ -49,8 +49,9 @@ export const updateStoreSettingsSchema = z.object({
     .email('البريد الإلكتروني غير صالح')
     .optional()
     .nullable(),
-  currency: z.string().trim().min(2).max(10).optional(),
+  currency: z.enum(['SYP', 'USD']).optional(),
   usdToSypRate: z.number().positive('سعر الصرف يجب أن يكون أكبر من صفر').max(100000000).optional().nullable(),
+  showDualCurrency: z.boolean().optional(),
   returnPolicy: z.string().trim().max(1000).optional().nullable(),
   returnsEnabled: z.boolean().optional(),
   shippingPolicy: z.string().trim().max(1000).optional().nullable(),

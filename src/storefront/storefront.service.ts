@@ -51,6 +51,7 @@ const STORE_SELECT = {
   publicEmail: true,
   currency: true,
   usdToSypRate: true,
+  showDualCurrency: true,
   returnPolicy: true,
   returnsEnabled: true,
   shippingPolicy: true,

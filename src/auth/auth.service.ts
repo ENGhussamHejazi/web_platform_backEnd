@@ -252,6 +252,11 @@ export class AuthService {
           businessCategories: dto.businessCategories,
           subscriptionStartAt,
           subscriptionEndAt: trialEndsAt,
+          // Every store shows a SYP price plus a USD reference price
+          // alongside it (see fmtUsdFromSyp) — seed a sane default rate so
+          // that works immediately instead of only after a merchant visits
+          // Store Settings and fills it in themselves.
+          usdToSypRate: 130,
         },
       });
       await tx.homepageSection.createMany({

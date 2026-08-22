@@ -368,6 +368,9 @@ model Store {
   // Merchant-maintained daily market rate used to show an indicative USD
   // equivalent while orders continue to be recorded in SYP.
   usdToSypRate              Decimal?  @db.Decimal(12, 2)
+  // Whether the storefront shows that USD-equivalent alongside the main
+  // price at all (still requires usdToSypRate to be set).
+  showDualCurrency          Boolean   @default(true)
   returnPolicy              String?
   returnsEnabled            Boolean   @default(false)
   shippingPolicy            String?
